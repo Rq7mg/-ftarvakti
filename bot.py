@@ -11,7 +11,7 @@ TOKEN = os.environ.get("TOKEN")
 # --------------------------
 # ADMIN user id (duyuru için)
 # --------------------------
-ADMIN_IDS = [123456789]  # <--- Telegram user ID'ni buraya koy
+ADMIN_IDS = [6563936773,6030484208]  # <--- Telegram user ID'ni buraya koy
 
 # --------------------------
 # Chat ID saklama dosyası
