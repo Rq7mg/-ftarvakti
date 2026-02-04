@@ -1,0 +1,16 @@
+{
+  "name": "ramazan-iftar-bot",
+  "description": "Telegram Ramazan iftar ve sahur vakit botu",
+  "repository": "https://github.com/kullaniciadi/ramazan-iftar-bot",
+  "keywords": ["telegram", "ramazan", "iftar", "sahur", "bot"],
+  "env": {
+    "TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    },
+    "EZAN_API_URL": {
+      "description": "Ezan vakti API URL",
+      "value": "https://ezanvakti.herokuapp.com/vakitler?il="
+    }
+  }
+}
