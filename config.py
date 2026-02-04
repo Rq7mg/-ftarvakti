@@ -1,0 +1,1 @@
+EZAN_API_URL = "https://ezanvakti.herokuapp.com/vakitler?il="
