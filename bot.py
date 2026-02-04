@@ -15,8 +15,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🕌 Ramazan Vakit Botu\n\n"
         "Komutlar:\n"
-        "/iftar ankara → İftara kaç dk kaldı\n"
-        "/sahur ankara → Sahura kaç dk kaldı\n\n"
+        "/iftar ankara → İftara kaç dakika kaldı\n"
+        "/sahur ankara → Sahura kaç dakika kaldı\n\n"
         "Hayırlı Ramazanlar 🤲"
     )
 
@@ -30,9 +30,11 @@ def dakika_hesapla(vakit_str):
     now = datetime.now(tz)
 
     vakit = datetime.strptime(vakit_str, "%H:%M").replace(
-        year=now.year, month=now.month, day=now.day
+        year=now.year,
+        month=now.month,
+        day=now.day,
+        tzinfo=tz
     )
-    vakit = tz.localize(vakit)
 
     return int((vakit - now).total_seconds() / 60)
 
