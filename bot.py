@@ -6,42 +6,35 @@ import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import random
+from pymongo import MongoClient
 
 TOKEN = os.environ.get("TOKEN")
+MONGO_URI = os.environ.get("MONGO_URI")  # MongoDB URI
 
 # --------------------------
-# ADMIN user id (duyuru için)
+# MongoDB Bağlantısı
 # --------------------------
-ADMIN_IDS = [6563936773]
-
-# --------------------------
-# Chat ID saklama dosyası
-# --------------------------
-CHAT_FILE = "chats.json"
+client = MongoClient(MONGO_URI)
+db = client["iftarbot"]          
+chats_collection = db["chats"]   
 
 def kaydet_chat_id(chat_id):
     try:
-        if os.path.exists(CHAT_FILE):
-            with open(CHAT_FILE, "r", encoding="utf-8") as f:
-                chats = json.load(f)
-        else:
-            chats = []
-
-        if chat_id not in chats:
-            chats.append(chat_id)
-            with open(CHAT_FILE, "w", encoding="utf-8") as f:
-                json.dump(chats, f)
+        if chats_collection.find_one({"chat_id": chat_id}) is None:
+            chats_collection.insert_one({"chat_id": chat_id})
     except Exception as e:
         print("chat_id kaydetme hatası:", e)
 
 def get_all_chats():
     try:
-        if os.path.exists(CHAT_FILE):
-            with open(CHAT_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
+        return [doc["chat_id"] for doc in chats_collection.find()]
     except:
         return []
+
+# --------------------------
+# ADMIN user id
+# --------------------------
+ADMIN_IDS = [6563936773, 6030484208]
 
 # --------------------------
 # Diyanet API fonksiyonları
@@ -73,7 +66,7 @@ def get_prayertimes(location_id):
         return None
 
 # --------------------------
-# Zaman hesapları (saat:dakika ve sonraki gün)
+# Zaman hesapları
 # --------------------------
 tz = pytz.timezone("Europe/Istanbul")
 
@@ -230,7 +223,7 @@ HADISLER = [
     "Sadaka fakiri zengin eder.",
     "Helal kazanç berekettir.",
     "Doğru söz cennete götürür.",
-    # ... 500'e tamamlamak için aynı formatta çoğaltabilirsin
+    # ... 500'e tamamlamak için çoğaltabilirsiniz
 ]
 
 USED_HADIS = []
