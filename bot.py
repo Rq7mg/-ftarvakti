@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -11,7 +11,7 @@ TOKEN = os.environ.get("TOKEN")
 # --------------------------
 # ADMIN user id (duyuru için)
 # --------------------------
-ADMIN_IDS = [6563936773,6030484208]  # <--- Telegram user ID'ni buraya koy
+ADMIN_IDS = [6563936773, 6030484208]
 
 # --------------------------
 # Chat ID saklama dosyası
@@ -66,34 +66,48 @@ def get_prayertimes(location_id):
         data = r.json()
         if not data:
             return None
-        return data[0]  # Bugün
+        return data[0]  # Bugünün vakitleri
     except Exception as e:
         print("get_prayertimes HATA:", e)
         return None
 
-def diff_minutes(vakit_str):
+# --------------------------
+# ZAMAN HESAPLARI (DÜZELTİLDİ)
+# --------------------------
+def diff_minutes_today(vakit_str):
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(tz)
-    try:
-        h, m = map(int, vakit_str.split(":"))
-        vakit_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        return int((vakit_time - now).total_seconds() / 60)
-    except Exception as e:
-        print("diff_minutes HATA:", e)
-        return None
+
+    h, m = map(int, vakit_str.split(":"))
+    vakit_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
+
+    return int((vakit_time - now).total_seconds() / 60)
+
+def diff_minutes_sahur(vakit_str):
+    tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.now(tz)
+
+    h, m = map(int, vakit_str.split(":"))
+    imsak_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
+
+    # Eğer şu an imsak saatini geçtiyse → yarının imsağı
+    if now >= imsak_time:
+        imsak_time += timedelta(days=1)
+
+    return int((imsak_time - now).total_seconds() / 60)
 
 # --------------------------
 # /start
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    kaydet_chat_id(chat_id)  # chat id kaydet
+    kaydet_chat_id(chat_id)
     await update.message.reply_text(
-        "🕌 Diyanet Namaz Vakti Botu hazır!\n\n"
+        "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
         "Komutlar:\n"
         "/iftar <şehir>\n"
         "/sahur <şehir>\n"
-        "/duyuru <mesaj> → Bot yöneticisi için duyuru"
+        "/duyuru <mesaj> → Bot yöneticisi için"
     )
 
 # --------------------------
@@ -116,15 +130,16 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     maghrib = times.get("maghrib") or times.get("Maghrib")
-    diff = diff_minutes(maghrib)
-    if diff is None:
-        await update.message.reply_text("İftar saati hesaplanamadı.")
-        return
+    diff = diff_minutes_today(maghrib)
 
     if diff > 0:
-        await update.message.reply_text(f"📍 {city.title()}\n🍽️ İftara {diff} dakika kaldı")
+        await update.message.reply_text(
+            f"📍 {city.title()}\n🍽️ İftara {diff} dakika kaldı"
+        )
     else:
-        await update.message.reply_text(f"📍 {city.title()}\n🌙 İftar vakti girdi veya geçti")
+        await update.message.reply_text(
+            f"📍 {city.title()}\n🌙 İftar vakti girdi veya geçti"
+        )
 
 # --------------------------
 # /sahur
@@ -146,15 +161,11 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     fajr = times.get("fajr") or times.get("Fajr")
-    diff = diff_minutes(fajr)
-    if diff is None:
-        await update.message.reply_text("Sahur saati hesaplanamadı.")
-        return
+    diff = diff_minutes_sahur(fajr)
 
-    if diff > 0:
-        await update.message.reply_text(f"📍 {city.title()}\n🌙 Sahura {diff} dakika kaldı")
-    else:
-        await update.message.reply_text(f"📍 {city.title()}\n⏰ Sahur vakti geçti")
+    await update.message.reply_text(
+        f"📍 {city.title()}\n🌙 Sahura {diff} dakika kaldı"
+    )
 
 # --------------------------
 # /duyuru
@@ -172,6 +183,7 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mesaj = " ".join(context.args)
     chats = get_all_chats()
     count = 0
+
     for chat_id in chats:
         try:
             await context.bot.send_message(chat_id, f"📢 Duyuru:\n\n{mesaj}")
@@ -189,7 +201,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
-    app.add_handler(CommandHandler("duyuru", duyuru))  # duyuru ekledik
+    app.add_handler(CommandHandler("duyuru", duyuru))
     print("Bot başlatıldı...")
     app.run_polling()
 
