@@ -107,7 +107,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Komutlar:\n"
         "/iftar <şehir>\n"
         "/sahur <şehir>\n"
-        "/duyuru <mesaj> → Bot yöneticisi için"
+        "/duyuru <mesaj> → Bot yöneticisi için\n"
+        "/hadis → Rastgele hadis\n"
+        "/ramazan → Ramazan günü veya kaç gün kaldı"
     )
 
 # --------------------------
@@ -194,6 +196,12 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Duyuru gönderildi! ({count} chat)")
 
 # --------------------------
+# Yeni komutlar için import
+# --------------------------
+from handlers.hadis import hadis
+from handlers.ramazan import ramazan
+
+# --------------------------
 # Main
 # --------------------------
 def main():
@@ -202,6 +210,11 @@ def main():
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
     app.add_handler(CommandHandler("duyuru", duyuru))
+    
+    # Yeni eklenen komutlar
+    app.add_handler(CommandHandler("hadis", hadis))
+    app.add_handler(CommandHandler("ramazan", ramazan))
+
     print("Bot başlatıldı...")
     app.run_polling()
 
