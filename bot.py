@@ -1,5 +1,4 @@
 import os
-import json
 import requests
 from datetime import datetime, timedelta
 import pytz
@@ -17,19 +16,6 @@ MONGO_URI = os.environ.get("MONGO_URI")  # MongoDB URI
 client = MongoClient(MONGO_URI)
 db = client["iftarbot"]          
 chats_collection = db["chats"]   
-
-def kaydet_chat_id(chat_id):
-    try:
-        if chats_collection.find_one({"chat_id": chat_id}) is None:
-            chats_collection.insert_one({"chat_id": chat_id})
-    except Exception as e:
-        print("chat_id kaydetme hatası:", e)
-
-def get_all_chats():
-    try:
-        return [doc["chat_id"] for doc in chats_collection.find()]
-    except:
-        return []
 
 # --------------------------
 # ADMIN user id
@@ -87,7 +73,15 @@ def time_until(vakit_str, next_day_if_passed=False):
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    kaydet_chat_id(chat_id)
+    chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
+    
+    # Daha önce kaydedilmemişse ekle
+    if chats_collection.find_one({"chat_id": chat_id}) is None:
+        chats_collection.insert_one({
+            "chat_id": chat_id,
+            "type": chat_type
+        })
+
     await update.message.reply_text(
         "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
         "Komutlar:\n"
@@ -171,7 +165,7 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     mesaj = " ".join(context.args)
-    chats = get_all_chats()
+    chats = [doc["chat_id"] for doc in chats_collection.find()]
     count = 0
 
     for chat_id in chats:
@@ -223,7 +217,6 @@ HADISLER = [
     "Sadaka fakiri zengin eder.",
     "Helal kazanç berekettir.",
     "Doğru söz cennete götürür.",
-    # ... 500'e tamamlamak için çoğaltabilirsiniz
 ]
 
 USED_HADIS = []
@@ -244,6 +237,26 @@ async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Hadis alınırken bir hata oluştu.")
 
 # --------------------------
+# /stats (admin sadece)
+# --------------------------
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
+        return
+
+    total_chats = chats_collection.count_documents({})
+    private_chats = chats_collection.count_documents({"type": "private"})
+    group_chats = chats_collection.count_documents({"type": {"$in": ["group", "supergroup"]}})
+
+    await update.message.reply_text(
+        f"📊 Bot İstatistikleri:\n\n"
+        f"Toplam kayıtlı chat: {total_chats}\n"
+        f"Özel mesaj (kişiler): {private_chats}\n"
+        f"Gruplar: {group_chats}"
+    )
+
+# --------------------------
 # Main
 # --------------------------
 def main():
@@ -254,6 +267,7 @@ def main():
     app.add_handler(CommandHandler("duyuru", duyuru))
     app.add_handler(CommandHandler("ramazan", ramazan))
     app.add_handler(CommandHandler("hadis", hadis))
+    app.add_handler(CommandHandler("stats", stats))
 
     print("Bot başlatıldı...")
     app.run_polling()
