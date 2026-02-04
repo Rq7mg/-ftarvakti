@@ -1,26 +1,48 @@
 import os
+import json
 import requests
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import random
-from pymongo import MongoClient
 
 TOKEN = os.environ.get("TOKEN")
-MONGO_URI = os.environ.get("MONGO_URI")  # MongoDB URI
-
-# --------------------------
-# MongoDB Bağlantısı
-# --------------------------
-client = MongoClient(MONGO_URI)
-db = client["iftarbot"]          
-chats_collection = db["chats"]   
 
 # --------------------------
 # ADMIN user id
 # --------------------------
 ADMIN_IDS = [6563936773, 6030484208]
+
+# --------------------------
+# Chat ID saklama dosyası
+# --------------------------
+CHAT_FILE = "chats.json"
+
+def kaydet_chat_id(chat_id, chat_type):
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                chats = json.load(f)
+        else:
+            chats = []
+
+        # Tekrar eklememek için kontrol
+        if not any(c["chat_id"] == chat_id for c in chats):
+            chats.append({"chat_id": chat_id, "type": chat_type})
+            with open(CHAT_FILE, "w", encoding="utf-8") as f:
+                json.dump(chats, f)
+    except Exception as e:
+        print("chat_id kaydetme hatası:", e)
+
+def get_all_chats():
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+    except:
+        return []
 
 # --------------------------
 # Diyanet API fonksiyonları
@@ -73,14 +95,8 @@ def time_until(vakit_str, next_day_if_passed=False):
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    chat_type = update.message.chat.type  # 'private', 'group', 'supergroup', 'channel'
-    
-    # Daha önce kaydedilmemişse ekle
-    if chats_collection.find_one({"chat_id": chat_id}) is None:
-        chats_collection.insert_one({
-            "chat_id": chat_id,
-            "type": chat_type
-        })
+    chat_type = update.message.chat.type
+    kaydet_chat_id(chat_id, chat_type)
 
     await update.message.reply_text(
         "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
@@ -165,10 +181,11 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     mesaj = " ".join(context.args)
-    chats = [doc["chat_id"] for doc in chats_collection.find()]
+    chats = get_all_chats()
     count = 0
 
-    for chat_id in chats:
+    for chat in chats:
+        chat_id = chat["chat_id"]
         try:
             await context.bot.send_message(chat_id, f"📢 Duyuru:\n\n{mesaj}")
             count += 1
@@ -237,7 +254,7 @@ async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Hadis alınırken bir hata oluştu.")
 
 # --------------------------
-# /stats (admin sadece)
+# /stats
 # --------------------------
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -245,9 +262,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
         return
 
-    total_chats = chats_collection.count_documents({})
-    private_chats = chats_collection.count_documents({"type": "private"})
-    group_chats = chats_collection.count_documents({"type": {"$in": ["group", "supergroup"]}})
+    chats = get_all_chats()
+    total_chats = len(chats)
+    private_chats = len([c for c in chats if c["type"] == "private"])
+    group_chats = len([c for c in chats if c["type"] in ["group", "supergroup"]])
 
     await update.message.reply_text(
         f"📊 Bot İstatistikleri:\n\n"
