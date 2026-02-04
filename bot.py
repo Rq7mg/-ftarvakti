@@ -5,13 +5,14 @@ from datetime import datetime, timedelta
 import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import random
 
 TOKEN = os.environ.get("TOKEN")
 
 # --------------------------
 # ADMIN user id (duyuru için)
 # --------------------------
-ADMIN_IDS = [6563936773, 6030484208]
+ADMIN_IDS = [6563936773]
 
 # --------------------------
 # Chat ID saklama dosyası
@@ -66,35 +67,27 @@ def get_prayertimes(location_id):
         data = r.json()
         if not data:
             return None
-        return data[0]  # Bugünün vakitleri
+        return data[0]
     except Exception as e:
         print("get_prayertimes HATA:", e)
         return None
 
 # --------------------------
-# ZAMAN HESAPLARI (DÜZELTİLDİ)
+# Zaman hesapları (saat:dakika ve sonraki gün)
 # --------------------------
-def diff_minutes_today(vakit_str):
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.now(tz)
+tz = pytz.timezone("Europe/Istanbul")
 
+def time_until(vakit_str, next_day_if_passed=False):
+    now = datetime.now(tz)
     h, m = map(int, vakit_str.split(":"))
     vakit_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-
-    return int((vakit_time - now).total_seconds() / 60)
-
-def diff_minutes_sahur(vakit_str):
-    tz = pytz.timezone("Europe/Istanbul")
-    now = datetime.now(tz)
-
-    h, m = map(int, vakit_str.split(":"))
-    imsak_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-
-    # Eğer şu an imsak saatini geçtiyse → yarının imsağı
-    if now >= imsak_time:
-        imsak_time += timedelta(days=1)
-
-    return int((imsak_time - now).total_seconds() / 60)
+    if next_day_if_passed and now >= vakit_time:
+        vakit_time += timedelta(days=1)
+    delta = vakit_time - now
+    total_minutes = int(delta.total_seconds() / 60)
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return hours, minutes, vakit_time.strftime("%H:%M")
 
 # --------------------------
 # /start
@@ -108,7 +101,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/iftar <şehir>\n"
         "/sahur <şehir>\n"
         "/duyuru <mesaj> → Bot yöneticisi için\n"
-        "/hadis → Rastgele hadis\n"
+        "/hadis → Rastgele Türkçe hadis\n"
         "/ramazan → Ramazan günü veya kaç gün kaldı"
     )
 
@@ -132,15 +125,17 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     maghrib = times.get("maghrib") or times.get("Maghrib")
-    diff = diff_minutes_today(maghrib)
+    hours, minutes, saat = time_until(maghrib, next_day_if_passed=True)
 
-    if diff > 0:
+    now = datetime.now(tz)
+    vakit_time = now.replace(hour=int(maghrib.split(":")[0]), minute=int(maghrib.split(":")[1]), second=0)
+    if now < vakit_time:
         await update.message.reply_text(
-            f"📍 {city.title()}\n🍽️ İftara {diff} dakika kaldı"
+            f"📍 {city.title()}\n🍽️ İftara {hours} saat {minutes} dakika kaldı ({saat})"
         )
     else:
         await update.message.reply_text(
-            f"📍 {city.title()}\n🌙 İftar vakti girdi veya geçti"
+            f"📍 {city.title()}\n🌙 İftar vakti geçti, bir sonraki vakit: {saat}"
         )
 
 # --------------------------
@@ -163,10 +158,10 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     fajr = times.get("fajr") or times.get("Fajr")
-    diff = diff_minutes_sahur(fajr)
+    hours, minutes, saat = time_until(fajr, next_day_if_passed=True)
 
     await update.message.reply_text(
-        f"📍 {city.title()}\n🌙 Sahura {diff} dakika kaldı"
+        f"📍 {city.title()}\n🌙 Sahura {hours} saat {minutes} dakika kaldı ({saat})"
     )
 
 # --------------------------
@@ -196,10 +191,64 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Duyuru gönderildi! ({count} chat)")
 
 # --------------------------
-# Yeni komutlar için import
+# /ramazan
 # --------------------------
-from handlers.hadis import hadis
-from handlers.ramazan import ramazan
+RAMAZAN_START = datetime(2026, 2, 19)
+RAMAZAN_END = datetime(2026, 3, 19)
+
+async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(tz).date()
+    start = RAMAZAN_START.date()
+    end = RAMAZAN_END.date()
+
+    if now < start:
+        kalan = (start - now).days
+        await update.message.reply_text(f"🌙 Ramazan’a {kalan} gün kaldı.")
+        return
+
+    if now > end:
+        await update.message.reply_text("🌙 Bu yılki Ramazan sona erdi. Allah kabul etsin 🤲")
+        return
+
+    gun = (now - start).days + 1
+    await update.message.reply_text(f"🌙 Bugün Ramazan’ın {gun}. günü.")
+
+# --------------------------
+# /hadis
+# --------------------------
+HADISLER = [
+    "Mümin, insanların elinden ve dilinden emin olan kimsedir.",
+    "Kolaylaştırın, zorlaştırmayın.",
+    "Komşusu aç iken tok yatan bizden değildir.",
+    "Sözünüz güzel olsun, kalbiniz güzel olsun.",
+    "İyilik edenin iyiliği karşılıksız kalmaz.",
+    "Gülümseyen yüz sadakadır.",
+    "Sabır imanın yarısıdır.",
+    "İyilik eden, ölmez, kalır.",
+    "Komşuya eziyet etmeyen cennete girer.",
+    "İlim öğrenmek ibadettir.",
+    "Sadaka fakiri zengin eder.",
+    "Helal kazanç berekettir.",
+    "Doğru söz cennete götürür.",
+    # ... 500'e tamamlamak için aynı formatta çoğaltabilirsin
+]
+
+USED_HADIS = []
+
+async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global USED_HADIS
+    try:
+        if len(USED_HADIS) == len(HADISLER):
+            USED_HADIS = []
+
+        kalan = list(set(HADISLER) - set(USED_HADIS))
+        secilen = random.choice(kalan)
+        USED_HADIS.append(secilen)
+
+        await update.message.reply_text(f"📜 Hadis\n\n“{secilen}”")
+    except Exception as e:
+        print("Hadis Hatası:", e)
+        await update.message.reply_text("⚠️ Hadis alınırken bir hata oluştu.")
 
 # --------------------------
 # Main
@@ -210,10 +259,8 @@ def main():
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
     app.add_handler(CommandHandler("duyuru", duyuru))
-    
-    # Yeni eklenen komutlar
-    app.add_handler(CommandHandler("hadis", hadis))
     app.add_handler(CommandHandler("ramazan", ramazan))
+    app.add_handler(CommandHandler("hadis", hadis))
 
     print("Bot başlatıldı...")
     app.run_polling()
