@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from datetime import datetime
 import pytz
@@ -7,6 +8,43 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.environ.get("TOKEN")
 
+# --------------------------
+# ADMIN user id (duyuru için)
+# --------------------------
+ADMIN_IDS = [123456789]  # <--- Telegram user ID'ni buraya koy
+
+# --------------------------
+# Chat ID saklama dosyası
+# --------------------------
+CHAT_FILE = "chats.json"
+
+def kaydet_chat_id(chat_id):
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                chats = json.load(f)
+        else:
+            chats = []
+
+        if chat_id not in chats:
+            chats.append(chat_id)
+            with open(CHAT_FILE, "w", encoding="utf-8") as f:
+                json.dump(chats, f)
+    except Exception as e:
+        print("chat_id kaydetme hatası:", e)
+
+def get_all_chats():
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+    except:
+        return []
+
+# --------------------------
+# Diyanet API fonksiyonları
+# --------------------------
 def find_location_id(city):
     try:
         url = f"https://prayertimes.api.abdus.dev/api/diyanet/search?q={city}"
@@ -28,8 +66,7 @@ def get_prayertimes(location_id):
         data = r.json()
         if not data:
             return None
-        # İlk gün (bugün)
-        return data[0]
+        return data[0]  # Bugün
     except Exception as e:
         print("get_prayertimes HATA:", e)
         return None
@@ -45,13 +82,23 @@ def diff_minutes(vakit_str):
         print("diff_minutes HATA:", e)
         return None
 
+# --------------------------
+# /start
+# --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    kaydet_chat_id(chat_id)  # chat id kaydet
     await update.message.reply_text(
-        "🕌 Diyanet Namaz Vakiti Botu Hazır!\n\n"
+        "🕌 Diyanet Namaz Vakti Botu hazır!\n\n"
+        "Komutlar:\n"
         "/iftar <şehir>\n"
-        "/sahur <şehir>"
+        "/sahur <şehir>\n"
+        "/duyuru <mesaj> → Bot yöneticisi için duyuru"
     )
 
+# --------------------------
+# /iftar
+# --------------------------
 async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Kullanım: /iftar <şehir>")
@@ -79,6 +126,9 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"📍 {city.title()}\n🌙 İftar vakti girdi veya geçti")
 
+# --------------------------
+# /sahur
+# --------------------------
 async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Kullanım: /sahur <şehir>")
@@ -106,12 +156,41 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"📍 {city.title()}\n⏰ Sahur vakti geçti")
 
+# --------------------------
+# /duyuru
+# --------------------------
+async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Kullanım: /duyuru <mesaj>")
+        return
+
+    mesaj = " ".join(context.args)
+    chats = get_all_chats()
+    count = 0
+    for chat_id in chats:
+        try:
+            await context.bot.send_message(chat_id, f"📢 Duyuru:\n\n{mesaj}")
+            count += 1
+        except Exception as e:
+            print("Duyuru gönderilemedi:", chat_id, e)
+
+    await update.message.reply_text(f"Duyuru gönderildi! ({count} chat)")
+
+# --------------------------
+# Main
+# --------------------------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
-
+    app.add_handler(CommandHandler("duyuru", duyuru))  # duyuru ekledik
+    print("Bot başlatıldı...")
     app.run_polling()
 
 if __name__ == "__main__":
