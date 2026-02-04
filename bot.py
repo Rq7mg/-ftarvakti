@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 import random
 
 TOKEN = os.environ.get("TOKEN")
@@ -27,7 +27,6 @@ def kaydet_chat_id(chat_id, chat_type):
         else:
             chats = []
 
-        # Tekrar eklememek için kontrol
         if not any(c["chat_id"] == chat_id for c in chats):
             chats.append({"chat_id": chat_id, "type": chat_type})
             with open(CHAT_FILE, "w", encoding="utf-8") as f:
@@ -107,6 +106,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/hadis → Rastgele Türkçe hadis\n"
         "/ramazan → Ramazan günü veya kaç gün kaldı"
     )
+
+# --------------------------
+# Mesaj bazlı otomatik kayıt
+# --------------------------
+async def kaydet_mesaj_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    chat_type = update.message.chat.type
+    kaydet_chat_id(chat_id, chat_type)
 
 # --------------------------
 # /iftar
@@ -286,6 +293,9 @@ def main():
     app.add_handler(CommandHandler("ramazan", ramazan))
     app.add_handler(CommandHandler("hadis", hadis))
     app.add_handler(CommandHandler("stats", stats))
+
+    # Mesaj bazlı otomatik kayıt
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, kaydet_mesaj_chat))
 
     print("Bot başlatıldı...")
     app.run_polling()
