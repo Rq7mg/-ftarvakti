@@ -9,14 +9,7 @@ import random
 
 TOKEN = os.environ.get("TOKEN")
 
-# --------------------------
-# ADMIN user id
-# --------------------------
 ADMIN_IDS = [6563936773, 6030484208]
-
-# --------------------------
-# Chat ID saklama dosyası
-# --------------------------
 CHAT_FILE = "chats.json"
 
 def kaydet_chat_id(chat_id, chat_type):
@@ -43,16 +36,10 @@ def get_all_chats():
     except:
         return []
 
-# --------------------------
-# Türkçe karakterleri normalize et
-# --------------------------
 def normalize(text):
     tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
     return text.translate(tr_map).lower()
 
-# --------------------------
-# Diyanet API fonksiyonları
-# --------------------------
 def find_location_id(city):
     try:
         url = f"https://prayertimes.api.abdus.dev/api/diyanet/search?q={city}"
@@ -62,8 +49,7 @@ def find_location_id(city):
         if not data:
             return None
         return data[0].get("id")
-    except Exception as e:
-        print("find_location_id HATA:", e)
+    except:
         return None
 
 def get_prayertimes(location_id):
@@ -72,16 +58,10 @@ def get_prayertimes(location_id):
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-        if not data:
-            return None
-        return data[0]
-    except Exception as e:
-        print("get_prayertimes HATA:", e)
+        return data[0] if data else None
+    except:
         return None
 
-# --------------------------
-# Zaman hesapları
-# --------------------------
 tz = pytz.timezone("Europe/Istanbul")
 
 def time_until(vakit_str, next_day_if_passed=False):
@@ -92,207 +72,116 @@ def time_until(vakit_str, next_day_if_passed=False):
         vakit_time += timedelta(days=1)
     delta = vakit_time - now
     total_minutes = int(delta.total_seconds() / 60)
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-    return hours, minutes, vakit_time.strftime("%H:%M")
+    return total_minutes // 60, total_minutes % 60, vakit_time.strftime("%H:%M")
 
-# --------------------------
-# /start
-# --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    chat_type = update.message.chat.type
-    kaydet_chat_id(chat_id, chat_type)
-
+    kaydet_chat_id(update.message.chat_id, update.message.chat.type)
     await update.message.reply_text(
         "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
-        "Komutlar:\n"
         "/iftar <şehir>\n"
         "/sahur <şehir>\n"
-        "/duyuru <mesaj> → Bot yöneticisi için\n"
-        "/hadis → Rastgele Türkçe hadis\n"
-        "/ramazan → Ramazan günü veya kaç gün kaldı"
+        "/duyuru → Yanıtladığın mesajı duyuru yapar\n"
+        "/hadis\n"
+        "/ramazan"
     )
 
-# --------------------------
-# Mesaj bazlı otomatik kayıt
-# --------------------------
 async def kaydet_mesaj_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    chat_type = update.message.chat.type
-    kaydet_chat_id(chat_id, chat_type)
+    kaydet_chat_id(update.message.chat_id, update.message.chat.type)
 
-# --------------------------
-# /iftar
-# --------------------------
 async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Kullanım: /iftar <şehir>")
         return
-
     city_input = context.args[0]
-    city = normalize(city_input)  # Normalize edildi
-    loc_id = find_location_id(city)
+    loc_id = find_location_id(normalize(city_input))
     if not loc_id:
         await update.message.reply_text("Şehir bulunamadı.")
         return
-
     times = get_prayertimes(loc_id)
-    if not times:
-        await update.message.reply_text("Namaz vakitleri alınamadı.")
-        return
+    maghrib = times.get("maghrib")
+    h, m, saat = time_until(maghrib, True)
+    await update.message.reply_text(f"📍 {city_input}\n🍽️ İftara {h} saat {m} dakika kaldı ({saat})")
 
-    maghrib = times.get("maghrib") or times.get("Maghrib")
-    hours, minutes, saat = time_until(maghrib, next_day_if_passed=True)
-
-    now = datetime.now(tz)
-    vakit_time = now.replace(hour=int(maghrib.split(":")[0]), minute=int(maghrib.split(":")[1]), second=0)
-    if now < vakit_time:
-        await update.message.reply_text(
-            f"📍 {city_input.title()}\n🍽️ İftara {hours} saat {minutes} dakika kaldı ({saat})"
-        )
-    else:
-        await update.message.reply_text(
-            f"📍 {city_input.title()}\n🌙 İftar vakti geçti, bir sonraki vakit: {saat}"
-        )
-
-# --------------------------
-# /sahur
-# --------------------------
 async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Kullanım: /sahur <şehir>")
         return
-
     city_input = context.args[0]
-    city = normalize(city_input)  # Normalize edildi
-    loc_id = find_location_id(city)
+    loc_id = find_location_id(normalize(city_input))
     if not loc_id:
         await update.message.reply_text("Şehir bulunamadı.")
         return
-
     times = get_prayertimes(loc_id)
-    if not times:
-        await update.message.reply_text("Namaz vakitleri alınamadı.")
-        return
+    fajr = times.get("fajr")
+    h, m, saat = time_until(fajr, True)
+    await update.message.reply_text(f"📍 {city_input}\n🌙 Sahura {h} saat {m} dakika kaldı ({saat})")
 
-    fajr = times.get("fajr") or times.get("Fajr")
-    hours, minutes, saat = time_until(fajr, next_day_if_passed=True)
-
-    await update.message.reply_text(
-        f"📍 {city_input.title()}\n🌙 Sahura {hours} saat {minutes} dakika kaldı ({saat})"
-    )
-
-# --------------------------
-# /duyuru
-# --------------------------
+# ==========================
+# DÜZELTİLMİŞ /DUYURU
+# ==========================
 async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
+    if update.message.from_user.id not in ADMIN_IDS:
         return
 
-    if not context.args:
-        await update.message.reply_text("Kullanım: /duyuru <mesaj>")
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❗ Lütfen duyuru yapmak için bir mesaja yanıt ver.")
         return
 
-    mesaj = " ".join(context.args)
+    reply = update.message.reply_to_message
     chats = get_all_chats()
-    count = 0
+    basarili = 0
 
     for chat in chats:
-        chat_id = chat["chat_id"]
         try:
-            await context.bot.send_message(chat_id, f"📢 Duyuru:\n\n{mesaj}")
-            count += 1
-        except Exception as e:
-            print("Duyuru gönderilemedi:", chat_id, e)
+            if reply.text:
+                await context.bot.send_message(chat["chat_id"], f"📢 DUYURU\n\n{reply.text}")
 
-    await update.message.reply_text(f"Duyuru gönderildi! ({count} chat)")
+            elif reply.photo:
+                await context.bot.send_photo(
+                    chat["chat_id"],
+                    photo=reply.photo[-1].file_id,
+                    caption=reply.caption or "📢 DUYURU"
+                )
 
-# --------------------------
-# /ramazan
-# --------------------------
-RAMAZAN_START = datetime(2026, 2, 19)
-RAMAZAN_END = datetime(2026, 3, 19)
+            elif reply.video:
+                await context.bot.send_video(
+                    chat["chat_id"],
+                    video=reply.video.file_id,
+                    caption=reply.caption or "📢 DUYURU"
+                )
+
+            basarili += 1
+        except:
+            pass
+
+    await update.message.reply_text(f"✅ Duyuru gönderildi.\n📨 Ulaşılan chat sayısı: {basarili}")
 
 async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(tz).date()
-    start = RAMAZAN_START.date()
-    end = RAMAZAN_END.date()
-
+    start = datetime(2026, 2, 19).date()
+    end = datetime(2026, 3, 19).date()
     if now < start:
-        kalan = (start - now).days
-        await update.message.reply_text(f"🌙 Ramazan’a {kalan} gün kaldı.")
-        return
+        await update.message.reply_text(f"🌙 Ramazan’a {(start - now).days} gün kaldı.")
+    elif now > end:
+        await update.message.reply_text("🌙 Ramazan sona erdi.")
+    else:
+        await update.message.reply_text(f"🌙 Bugün Ramazan’ın {(now - start).days + 1}. günü.")
 
-    if now > end:
-        await update.message.reply_text("🌙 Bu yılki Ramazan sona erdi. Allah kabul etsin 🤲")
-        return
-
-    gun = (now - start).days + 1
-    await update.message.reply_text(f"🌙 Bugün Ramazan’ın {gun}. günü.")
-
-# --------------------------
-# /hadis
-# --------------------------
 HADISLER = [
     "Mümin, insanların elinden ve dilinden emin olan kimsedir.",
     "Kolaylaştırın, zorlaştırmayın.",
-    "Komşusu aç iken tok yatan bizden değildir.",
-    "Sözünüz güzel olsun, kalbiniz güzel olsun.",
-    "İyilik edenin iyiliği karşılıksız kalmaz.",
-    "Gülümseyen yüz sadakadır.",
-    "Sabır imanın yarısıdır.",
-    "İyilik eden, ölmez, kalır.",
-    "Komşuya eziyet etmeyen cennete girer.",
-    "İlim öğrenmek ibadettir.",
-    "Sadaka fakiri zengin eder.",
-    "Helal kazanç berekettir.",
-    "Doğru söz cennete götürür.",
+    "Gülümseyen yüz sadakadır."
 ]
-
 USED_HADIS = []
 
 async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global USED_HADIS
-    try:
-        if len(USED_HADIS) == len(HADISLER):
-            USED_HADIS = []
+    if len(USED_HADIS) == len(HADISLER):
+        USED_HADIS = []
+    secilen = random.choice(list(set(HADISLER) - set(USED_HADIS)))
+    USED_HADIS.append(secilen)
+    await update.message.reply_text(f"📜 Hadis\n\n“{secilen}”")
 
-        kalan = list(set(HADISLER) - set(USED_HADIS))
-        secilen = random.choice(kalan)
-        USED_HADIS.append(secilen)
-
-        await update.message.reply_text(f"📜 Hadis\n\n“{secilen}”")
-    except Exception as e:
-        print("Hadis Hatası:", e)
-        await update.message.reply_text("⚠️ Hadis alınırken bir hata oluştu.")
-
-# --------------------------
-# /stats
-# --------------------------
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
-        return
-
-    chats = get_all_chats()
-    total_chats = len(chats)
-    private_chats = len([c for c in chats if c["type"] == "private"])
-    group_chats = len([c for c in chats if c["type"] in ["group", "supergroup"]])
-
-    await update.message.reply_text(
-        f"📊 Bot İstatistikleri:\n\n"
-        f"Toplam kayıtlı chat: {total_chats}\n"
-        f"Özel mesaj (kişiler): {private_chats}\n"
-        f"Gruplar: {group_chats}"
-    )
-
-# --------------------------
-# Main
-# --------------------------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -301,12 +190,8 @@ def main():
     app.add_handler(CommandHandler("duyuru", duyuru))
     app.add_handler(CommandHandler("ramazan", ramazan))
     app.add_handler(CommandHandler("hadis", hadis))
-    app.add_handler(CommandHandler("stats", stats))
-
-    # Mesaj bazlı otomatik kayıt
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, kaydet_mesaj_chat))
-
-    print("Bot başlatıldı...")
+    print("Bot çalışıyor...")
     app.run_polling()
 
 if __name__ == "__main__":
