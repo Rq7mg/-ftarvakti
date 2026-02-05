@@ -1,9 +1,126 @@
+import os
+import json
+import requests
+from datetime import datetime, timedelta
+import pytz
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+import random
+
+TOKEN = os.environ.get("TOKEN")
+
+# --------------------------
+# ADMIN user id
+# --------------------------
+ADMIN_IDS = [6563936773, 6030484208]
+
+# --------------------------
+# Chat ID saklama dosyası
+# --------------------------
+CHAT_FILE = "chats.json"
+
+def kaydet_chat_id(chat_id, chat_type):
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                chats = json.load(f)
+        else:
+            chats = []
+
+        if not any(c["chat_id"] == chat_id for c in chats):
+            chats.append({"chat_id": chat_id, "type": chat_type})
+            with open(CHAT_FILE, "w", encoding="utf-8") as f:
+                json.dump(chats, f)
+    except Exception as e:
+        print("chat_id kaydetme hatası:", e)
+
+def get_all_chats():
+    try:
+        if os.path.exists(CHAT_FILE):
+            with open(CHAT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+    except:
+        return []
+
 # --------------------------
 # Türkçe karakterleri normalize et
 # --------------------------
 def normalize(text):
     tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
     return text.translate(tr_map).lower()
+
+# --------------------------
+# Diyanet API fonksiyonları
+# --------------------------
+def find_location_id(city):
+    try:
+        url = f"https://prayertimes.api.abdus.dev/api/diyanet/search?q={city}"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return None
+        return data[0].get("id")
+    except Exception as e:
+        print("find_location_id HATA:", e)
+        return None
+
+def get_prayertimes(location_id):
+    try:
+        url = f"https://prayertimes.api.abdus.dev/api/diyanet/prayertimes?location_id={location_id}"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return None
+        return data[0]
+    except Exception as e:
+        print("get_prayertimes HATA:", e)
+        return None
+
+# --------------------------
+# Zaman hesapları
+# --------------------------
+tz = pytz.timezone("Europe/Istanbul")
+
+def time_until(vakit_str, next_day_if_passed=False):
+    now = datetime.now(tz)
+    h, m = map(int, vakit_str.split(":"))
+    vakit_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if next_day_if_passed and now >= vakit_time:
+        vakit_time += timedelta(days=1)
+    delta = vakit_time - now
+    total_minutes = int(delta.total_seconds() / 60)
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return hours, minutes, vakit_time.strftime("%H:%M")
+
+# --------------------------
+# /start
+# --------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    chat_type = update.message.chat.type
+    kaydet_chat_id(chat_id, chat_type)
+
+    await update.message.reply_text(
+        "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
+        "Komutlar:\n"
+        "/iftar <şehir>\n"
+        "/sahur <şehir>\n"
+        "/duyuru <mesaj> → Bot yöneticisi için\n"
+        "/hadis → Rastgele Türkçe hadis\n"
+        "/ramazan → Ramazan günü veya kaç gün kaldı"
+    )
+
+# --------------------------
+# Mesaj bazlı otomatik kayıt
+# --------------------------
+async def kaydet_mesaj_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    chat_type = update.message.chat.type
+    kaydet_chat_id(chat_id, chat_type)
 
 # --------------------------
 # /iftar
@@ -65,3 +182,132 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📍 {city_input.title()}\n🌙 Sahura {hours} saat {minutes} dakika kaldı ({saat})"
     )
+
+# --------------------------
+# /duyuru
+# --------------------------
+async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Kullanım: /duyuru <mesaj>")
+        return
+
+    mesaj = " ".join(context.args)
+    chats = get_all_chats()
+    count = 0
+
+    for chat in chats:
+        chat_id = chat["chat_id"]
+        try:
+            await context.bot.send_message(chat_id, f"📢 Duyuru:\n\n{mesaj}")
+            count += 1
+        except Exception as e:
+            print("Duyuru gönderilemedi:", chat_id, e)
+
+    await update.message.reply_text(f"Duyuru gönderildi! ({count} chat)")
+
+# --------------------------
+# /ramazan
+# --------------------------
+RAMAZAN_START = datetime(2026, 2, 19)
+RAMAZAN_END = datetime(2026, 3, 19)
+
+async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(tz).date()
+    start = RAMAZAN_START.date()
+    end = RAMAZAN_END.date()
+
+    if now < start:
+        kalan = (start - now).days
+        await update.message.reply_text(f"🌙 Ramazan’a {kalan} gün kaldı.")
+        return
+
+    if now > end:
+        await update.message.reply_text("🌙 Bu yılki Ramazan sona erdi. Allah kabul etsin 🤲")
+        return
+
+    gun = (now - start).days + 1
+    await update.message.reply_text(f"🌙 Bugün Ramazan’ın {gun}. günü.")
+
+# --------------------------
+# /hadis
+# --------------------------
+HADISLER = [
+    "Mümin, insanların elinden ve dilinden emin olan kimsedir.",
+    "Kolaylaştırın, zorlaştırmayın.",
+    "Komşusu aç iken tok yatan bizden değildir.",
+    "Sözünüz güzel olsun, kalbiniz güzel olsun.",
+    "İyilik edenin iyiliği karşılıksız kalmaz.",
+    "Gülümseyen yüz sadakadır.",
+    "Sabır imanın yarısıdır.",
+    "İyilik eden, ölmez, kalır.",
+    "Komşuya eziyet etmeyen cennete girer.",
+    "İlim öğrenmek ibadettir.",
+    "Sadaka fakiri zengin eder.",
+    "Helal kazanç berekettir.",
+    "Doğru söz cennete götürür.",
+]
+
+USED_HADIS = []
+
+async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global USED_HADIS
+    try:
+        if len(USED_HADIS) == len(HADISLER):
+            USED_HADIS = []
+
+        kalan = list(set(HADISLER) - set(USED_HADIS))
+        secilen = random.choice(kalan)
+        USED_HADIS.append(secilen)
+
+        await update.message.reply_text(f"📜 Hadis\n\n“{secilen}”")
+    except Exception as e:
+        print("Hadis Hatası:", e)
+        await update.message.reply_text("⚠️ Hadis alınırken bir hata oluştu.")
+
+# --------------------------
+# /stats
+# --------------------------
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("Bu komutu sadece bot yöneticisi kullanabilir.")
+        return
+
+    chats = get_all_chats()
+    total_chats = len(chats)
+    private_chats = len([c for c in chats if c["type"] == "private"])
+    group_chats = len([c for c in chats if c["type"] in ["group", "supergroup"]])
+
+    await update.message.reply_text(
+        f"📊 Bot İstatistikleri:\n\n"
+        f"Toplam kayıtlı chat: {total_chats}\n"
+        f"Özel mesaj (kişiler): {private_chats}\n"
+        f"Gruplar: {group_chats}"
+    )
+
+# --------------------------
+# Main
+# --------------------------
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("iftar", iftar))
+    app.add_handler(CommandHandler("sahur", sahur))
+    app.add_handler(CommandHandler("duyuru", duyuru))
+    app.add_handler(CommandHandler("ramazan", ramazan))
+    app.add_handler(CommandHandler("hadis", hadis))
+    app.add_handler(CommandHandler("stats", stats))
+
+    # Mesaj bazlı otomatik kayıt
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, kaydet_mesaj_chat))
+
+    print("Bot başlatıldı...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
