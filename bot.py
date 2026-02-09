@@ -12,6 +12,24 @@ TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [6563936773, 6030484208]
 CHAT_FILE = "chats.json"
 
+# =========================
+# JSON'dan hadis yükleme
+# =========================
+HADIS_DOSYA = "hadisler.json"
+
+def load_json(dosya):
+    try:
+        with open(dosya, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"⚠️ {dosya} bulunamadı.")
+        return []
+
+HADISLER = load_json(HADIS_DOSYA)
+
+# --------------------------
+# Mevcut diğer kodlar (chat kaydetme, normalize, iftar, sahur vb.) aynen kalacak
+# --------------------------
 def kaydet_chat_id(chat_id, chat_type):
     try:
         if os.path.exists(CHAT_FILE):
@@ -167,21 +185,21 @@ async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"🌙 Bugün Ramazan’ın {(now - start).days + 1}. günü.")
 
-HADISLER = [
-    "Mümin, insanların elinden ve dilinden emin olan kimsedir.",
-    "Kolaylaştırın, zorlaştırmayın.",
-    "Gülümseyen yüz sadakadır."
-]
-USED_HADIS = []
-
+# ==========================
+# GÜNCELLENMİŞ /HADİS KOMUTU
+# ==========================
 async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global USED_HADIS
-    if len(USED_HADIS) == len(HADISLER):
-        USED_HADIS = []
-    secilen = random.choice(list(set(HADISLER) - set(USED_HADIS)))
-    USED_HADIS.append(secilen)
-    await update.message.reply_text(f"📜 Hadis\n\n“{secilen}”")
+    if not HADISLER:
+        await update.message.reply_text("⚠️ Hadis bulunamadı.")
+        return
 
+    secilen = random.choice(HADISLER)  # JSON’daki tüm hadisler havuzdan rastgele seçilir
+    mesaj = f"📜 Hadis-i Şerif\n\n“{secilen['metin']}”\n\nKaynak: {secilen['kaynak']}"
+    await update.message.reply_text(mesaj)
+
+# ==========================
+# BOTU BAŞLATMA
+# ==========================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
