@@ -3,30 +3,51 @@ import random
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 
-HADIS_DOSYA = "hadisler.json"
-ADMINS = [123456789]  # buraya admin telegram ID ekle
+# --------------------------
+# Ayarlar
+# --------------------------
+HADIS_DOSYA = "hadisler.json"      # JSON dosyanın yolu
+USED_HADIS_DOSYA = "used_hadis.json"  # Gösterilen hadisleri saklamak için (Heroku restart sonrası hatırlamak için)
+ADMINS = [6563936773]               # Telegram admin ID'lerini buraya ekle
 
 # --------------------------
-# Hadisleri yükleme
+# JSON yükleme ve kaydetme
 # --------------------------
-def load_hadisler():
+def load_json(dosya):
     try:
-        with open(HADIS_DOSYA, "r", encoding="utf-8") as f:
+        with open(dosya, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return []
 
-HADISLER = load_hadisler()
+def save_json(dosya, data):
+    with open(dosya, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+# Hadisleri ve gösterilenleri yükle
+HADISLER = load_json(HADIS_DOSYA)
+USED_HADIS = load_json(USED_HADIS_DOSYA)
 
 # --------------------------
 # /hadis komutu
 # --------------------------
 async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global USED_HADIS
+
     if not HADISLER:
         await update.message.reply_text("⚠️ Hadis bulunamadı.")
         return
 
-    secilen = random.choice(HADISLER)
+    # Tüm hadisler gösterildiyse sıfırla
+    if len(USED_HADIS) == len(HADISLER):
+        USED_HADIS = []
+
+    # Kullanılmayan hadislerden seç
+    kalan = [h for h in HADISLER if h not in USED_HADIS]
+    secilen = random.choice(kalan)
+    USED_HADIS.append(secilen)
+    save_json(USED_HADIS_DOSYA, USED_HADIS)  # Heroku restart sonrası kaybolmaması için
+
     mesaj = f"📜 Hadis-i Şerif\n🕌 Ramazan Botu\n\n“{secilen['metin']}”\n\nKaynak: {secilen['kaynak']}"
     await update.message.reply_text(mesaj)
 
@@ -48,15 +69,12 @@ async def eklehadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     metin, kaynak = [x.strip() for x in args[1].split("|", 1)]
     yeni_hadis = {"metin": metin, "kaynak": kaynak}
     HADISLER.append(yeni_hadis)
-
-    # JSON dosyasına kaydet
-    with open(HADIS_DOSYA, "w", encoding="utf-8") as f:
-        json.dump(HADISLER, f, ensure_ascii=False, indent=4)
+    save_json(HADIS_DOSYA, HADISLER)
 
     await update.message.reply_text(f"✅ Hadis eklendi:\n“{metin}”\nKaynak: {kaynak}")
 
 # --------------------------
-# Handler ekleme
+# Handler kayıt fonksiyonu
 # --------------------------
 def register_handlers(dp):
     dp.add_handler(CommandHandler("hadis", hadis))
