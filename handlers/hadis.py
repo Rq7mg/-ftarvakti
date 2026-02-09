@@ -6,8 +6,8 @@ from telegram.ext import ContextTypes, CommandHandler
 # --------------------------
 # Ayarlar
 # --------------------------
-HADIS_DOSYA = "hadisler.json"  # Tüm hadisleri içeren JSON dosyası
-ADMINS = [6563936773]           # Telegram admin ID'lerini buraya ekle
+HADIS_DOSYA = "hadisler.json"  # Tüm hadislerin JSON dosyası
+ADMINS = [6563936773]           # Admin Telegram ID'lerini buraya ekle
 
 # --------------------------
 # JSON yükleme ve kaydetme
@@ -23,7 +23,7 @@ def save_json(dosya, data):
     with open(dosya, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Hadisleri yükle
+# Tüm hadisleri yükle
 HADISLER = load_json(HADIS_DOSYA)
 
 # --------------------------
@@ -34,7 +34,7 @@ async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Hadis bulunamadı.")
         return
 
-    secilen = random.choice(HADISLER)  # tamamen random, filtre yok
+    secilen = random.choice(HADISLER)  # tamamen random, USED_HADIS yok
     mesaj = f"📜 Hadis-i Şerif\n🕌 Ramazan Botu\n\n“{secilen['metin']}”\n\nKaynak: {secilen['kaynak']}"
     await update.message.reply_text(mesaj)
 
