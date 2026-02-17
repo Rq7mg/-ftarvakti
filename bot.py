@@ -4,6 +4,7 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 import random
 
@@ -28,7 +29,7 @@ def load_json(dosya):
 HADISLER = load_json(HADIS_DOSYA)
 
 # --------------------------
-# Mevcut diğer kodlar (chat kaydetme, normalize, iftar, sahur vb.) aynen kalacak
+# Mevcut fonksiyonlar (chat kaydetme, normalize vb.)
 # --------------------------
 def kaydet_chat_id(chat_id, chat_type):
     try:
@@ -92,110 +93,188 @@ def time_until(vakit_str, next_day_if_passed=False):
     total_minutes = int(delta.total_seconds() / 60)
     return total_minutes // 60, total_minutes % 60, vakit_time.strftime("%H:%M")
 
+# ==========================
+# GÜNCELLENMİŞ START KOMUTU
+# ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kaydet_chat_id(update.message.chat_id, update.message.chat.type)
-    await update.message.reply_text(
-        "🕌 Diyanet İftar & Sahur Vakti Botu hazır!\n\n"
-        "/iftar <şehir>\n"
-        "/sahur <şehir>\n"
-        "/duyuru → Yanıtladığın mesajı duyuru yapar\n"
-        "/hadis\n"
-        "/ramazan"
+    
+    mesaj = (
+        "<b>🌙 Hoş Geldiniz, Kıymetli Gönül Dostu!</b>\n\n"
+        "Ramazan-ı Şerif'in bereketini, huzurunu ve maneviyatını "
+        "birlikte yaşamak için buradayız. Bu bot, sizlere vaktin çağrısını "
+        "ve günün manevi rızkını ulaştırmak için tasarlanmıştır.\n\n"
+        "👇 <b>Kullanabileceğiniz Hizmetler:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🍽 <b>/iftar &lt;şehir&gt;</b> : İftar vaktine kalan süreyi ve iftar duasını gösterir.\n"
+        "🥣 <b>/sahur &lt;şehir&gt;</b> : Sahur vaktini ve niyet duasını paylaşır.\n"
+        "📅 <b>/ramazan</b> : Ramazan ayının kaçıncı gününde olduğumuzu söyler.\n"
+        "📜 <b>/hadis</b> : Kalbinize dokunacak bir Hadis-i Şerif getirir.\n"
+        "📢 <b>/duyuru</b> : (Yöneticiler için) Toplu mesaj gönderir.\n\n"
+        "<i>🤲 Rabbim ibadetlerinizi kabul, dualarınızı makbul eylesin.</i>"
     )
+    
+    await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
 async def kaydet_mesaj_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kaydet_chat_id(update.message.chat_id, update.message.chat.type)
 
+# ==========================
+# GÜNCELLENMİŞ İFTAR KOMUTU
+# ==========================
 async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Kullanım: /iftar <şehir>")
+        await update.message.reply_text("❗ <i>Lütfen şehir adı giriniz. Örnek:</i> <code>/iftar Istanbul</code>", parse_mode=ParseMode.HTML)
         return
     city_input = context.args[0]
     loc_id = find_location_id(normalize(city_input))
     if not loc_id:
-        await update.message.reply_text("Şehir bulunamadı.")
+        await update.message.reply_text("🚫 <b>Şehir bulunamadı.</b> Lütfen yazımı kontrol ediniz.", parse_mode=ParseMode.HTML)
         return
     times = get_prayertimes(loc_id)
     maghrib = times.get("maghrib")
     h, m, saat = time_until(maghrib, True)
-    await update.message.reply_text(f"📍 {city_input}\n🍽️ İftara {h} saat {m} dakika kaldı ({saat})")
+    
+    mesaj = (
+        f"🕌 <b>İFTAR VAKTİNE DOĞRU</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📍 <b>Konum:</b> {city_input.capitalize()}\n"
+        f"🍽 <b>İftar Saati:</b> <code>{saat}</code>\n"
+        f"⏳ <b>Kalan Süre:</b> <b>{h} saat {m} dakika</b>\n\n"
+        f"<i>“Allah'ım! Senin rızan için oruç tuttum, sana inandım, sana güvendim ve senin rızkınla orucumu açıyorum.”</i>\n\n"
+        f"✨ <i>Sofranız bereketli, dualarınız kabul olsun.</i>"
+    )
+    
+    await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
+# ==========================
+# GÜNCELLENMİŞ SAHUR KOMUTU
+# ==========================
 async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Kullanım: /sahur <şehir>")
+        await update.message.reply_text("❗ <i>Lütfen şehir adı giriniz. Örnek:</i> <code>/sahur Ankara</code>", parse_mode=ParseMode.HTML)
         return
     city_input = context.args[0]
     loc_id = find_location_id(normalize(city_input))
     if not loc_id:
-        await update.message.reply_text("Şehir bulunamadı.")
+        await update.message.reply_text("🚫 <b>Şehir bulunamadı.</b> Lütfen yazımı kontrol ediniz.", parse_mode=ParseMode.HTML)
         return
     times = get_prayertimes(loc_id)
     fajr = times.get("fajr")
     h, m, saat = time_until(fajr, True)
-    await update.message.reply_text(f"📍 {city_input}\n🌙 Sahura {h} saat {m} dakika kaldı ({saat})")
+    
+    mesaj = (
+        f"🌌 <b>SAHUR BEREKETİ</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📍 <b>Konum:</b> {city_input.capitalize()}\n"
+        f"🥣 <b>İmsak (Sahur Bitiş):</b> <code>{saat}</code>\n"
+        f"⏳ <b>Kalan Süre:</b> <b>{h} saat {m} dakika</b>\n\n"
+        f"💡 <b>Günün Niyeti:</b>\n"
+        f"<i>“Niyet ettim Allah rızası için yarınki orucu tutmaya...”</i>\n\n"
+        f"🤲 <i>Rabbim tutacağınız oruçları şimdiden kabul eylesin.</i>"
+    )
+    
+    await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
 # ==========================
-# DÜZELTİLMİŞ /DUYURU
+# GÜNCELLENMİŞ DUYURU KOMUTU
 # ==========================
 async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS:
         return
 
     if not update.message.reply_to_message:
-        await update.message.reply_text("❗ Lütfen duyuru yapmak için bir mesaja yanıt ver.")
+        await update.message.reply_text("❗ <b>Hata:</b> Duyuru yapmak için bir mesaja yanıt vermelisiniz.", parse_mode=ParseMode.HTML)
         return
 
     reply = update.message.reply_to_message
     chats = get_all_chats()
     basarili = 0
 
+    # Duyuru başlığı
+    header_text = "📢 <b>RAMAZAN DUYURUSU</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+
     for chat in chats:
         try:
             if reply.text:
-                await context.bot.send_message(chat["chat_id"], f"📢 DUYURU\n\n{reply.text}")
+                await context.bot.send_message(chat["chat_id"], f"{header_text}{reply.text}", parse_mode=ParseMode.HTML)
 
             elif reply.photo:
                 await context.bot.send_photo(
                     chat["chat_id"],
                     photo=reply.photo[-1].file_id,
-                    caption=reply.caption or "📢 DUYURU"
+                    caption=f"{header_text}{reply.caption}" if reply.caption else "📢 <b>RAMAZAN DUYURUSU</b>",
+                    parse_mode=ParseMode.HTML
                 )
 
             elif reply.video:
                 await context.bot.send_video(
                     chat["chat_id"],
                     video=reply.video.file_id,
-                    caption=reply.caption or "📢 DUYURU"
+                    caption=f"{header_text}{reply.caption}" if reply.caption else "📢 <b>RAMAZAN DUYURUSU</b>",
+                    parse_mode=ParseMode.HTML
                 )
 
             basarili += 1
         except:
             pass
 
-    await update.message.reply_text(f"✅ Duyuru gönderildi.\n📨 Ulaşılan chat sayısı: {basarili}")
-
-async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now(tz).date()
-    start = datetime(2026, 2, 19).date()
-    end = datetime(2026, 3, 19).date()
-    if now < start:
-        await update.message.reply_text(f"🌙 Ramazan’a {(start - now).days} gün kaldı.")
-    elif now > end:
-        await update.message.reply_text("🌙 Ramazan sona erdi.")
-    else:
-        await update.message.reply_text(f"🌙 Bugün Ramazan’ın {(now - start).days + 1}. günü.")
+    await update.message.reply_text(f"✅ <b>Duyuru Başarıyla Gönderildi.</b>\n📨 Ulaşılan kişi/grup sayısı: <b>{basarili}</b>", parse_mode=ParseMode.HTML)
 
 # ==========================
-# GÜNCELLENMİŞ /HADİS KOMUTU
+# GÜNCELLENMİŞ RAMAZAN SAYACI
+# ==========================
+async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(tz).date()
+    # Tarihler kullanıcı isteği üzerine 2026 olarak kalmıştır
+    start_date = datetime(2026, 2, 19).date()
+    end_date = datetime(2026, 3, 19).date()
+    
+    if now < start_date:
+        kalan = (start_date - now).days
+        mesaj = (
+            f"⏳ <b>RAMAZAN'A DOĞRU</b>\n\n"
+            f"On bir ayın sultanına kavuşmaya son:\n"
+            f"🌙 <b>{kalan} GÜN</b> kaldı.\n\n"
+            f"<i>Hazırlıklar başlasın, gönüller şenlensin!</i>"
+        )
+    elif now > end_date:
+        mesaj = (
+            "👋 <b>ELVEDA YA ŞEHR-İ RAMAZAN</b>\n\n"
+            "Mübarek Ramazan ayı sona erdi.\n"
+            "<i>Rabbim tekrarına kavuşturmayı nasip eylesin. Bayramımız mübarek olsun.</i>"
+        )
+    else:
+        gun = (now - start_date).days + 1
+        mesaj = (
+            f"🌙 <b>RAMAZAN TAKVİMİ</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Bugün Ramazan-ı Şerif'in:\n"
+            f"✨ <b>{gun}. Günü</b>\n\n"
+            f"<i>“Oruç sabrın yarısıdır.”</i>\n"
+            f"Rabbim ibadetlerinizi dergahında kabul eylesin."
+        )
+        
+    await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
+
+# ==========================
+# GÜNCELLENMİŞ HADİS KOMUTU
 # ==========================
 async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HADISLER:
-        await update.message.reply_text("⚠️ Hadis bulunamadı.")
+        await update.message.reply_text("⚠️ <i>Sistemde şu an yüklü hadis bulunamadı.</i>", parse_mode=ParseMode.HTML)
         return
 
-    secilen = random.choice(HADISLER)  # JSON’daki tüm hadisler havuzdan rastgele seçilir
-    mesaj = f"📜 Hadis-i Şerif\n\n“{secilen['metin']}”\n\nKaynak: {secilen['kaynak']}"
-    await update.message.reply_text(mesaj)
+    secilen = random.choice(HADISLER)
+    
+    mesaj = (
+        "📜 <b>BİR HADİS-İ ŞERİF</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<i>“{secilen['metin']}”</i>\n\n"
+        f"📚 <b>Kaynak:</b> {secilen['kaynak']}"
+    )
+    
+    await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
 # ==========================
 # BOTU BAŞLATMA
@@ -209,7 +288,7 @@ def main():
     app.add_handler(CommandHandler("ramazan", ramazan))
     app.add_handler(CommandHandler("hadis", hadis))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, kaydet_mesaj_chat))
-    print("Bot çalışıyor...")
+    print("Bot başarıyla başlatıldı ve çalışıyor...")
     app.run_polling()
 
 if __name__ == "__main__":
