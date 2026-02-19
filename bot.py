@@ -10,7 +10,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 # =========================
-# AYARLAR VE DEĞİŞKENLER
+# AYARLAR
 # =========================
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [6563936773, 6030484208]
@@ -26,8 +26,7 @@ def load_json(dosya):
     try:
         with open(dosya, "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
-        return []
+    except: return []
 
 HADISLER = load_json(HADIS_DOSYA)
 
@@ -49,37 +48,37 @@ def kaydet_chat_id(chat_id, chat_type):
     except: pass
 
 # =========================
-# 2. API VE ZAMAN FONKSİYONLARI
+# 2. PROFESYONEL API SİSTEMİ
 # =========================
 
 def normalize(text):
     tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
     return text.translate(tr_map).lower().strip()
 
-def find_location_id(city):
-    """Şehir ID'sini bulur, hata yönetimli."""
+def get_prayertimes(city):
+    """
+    Heroku'daki belirsiz API yerine en stabil Aladhan API kullanılır.
+    Method 13 = T.C. Diyanet İşleri Başkanlığı yöntemidir.
+    """
     try:
-        url = f"https://prayertimes.api.abdus.dev/api/diyanet/search?q={city}"
+        city_norm = normalize(city)
+        # Direkt Aladhan API kullanarak 'Sunucu yanıt vermiyor' hatasını bitiriyoruz
+        url = f"https://api.aladhan.com/v1/timingsByCity?city={city_norm}&country=Turkey&method=13"
+        
         r = requests.get(url, timeout=15)
-        r.raise_for_status()
+        if r.status_code != 200:
+            return None
+            
         data = r.json()
-        return data[0].get("id") if (data and isinstance(data, list)) else None
-    except Exception as e:
-        print(f"Konum Hatası ({city}): {e}")
-        return None
-
-def get_prayertimes(location_id):
-    """Vakitleri çeker, NoneType hatasını önler."""
-    try:
-        url = f"https://prayertimes.api.abdus.dev/api/diyanet/prayertimes?location_id={location_id}"
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if data and isinstance(data, list):
-            return data[0]
+        if data and "data" in data:
+            timings = data["data"]["timings"]
+            return {
+                "fajr": timings["Fajr"],    # İmsak
+                "maghrib": timings["Maghrib"] # İftar
+            }
         return None
     except Exception as e:
-        print(f"Vakit API Hatası: {e}")
+        print(f"API Hatası: {e}")
         return None
 
 def time_until(vakit_str, next_day_if_passed=False):
@@ -96,7 +95,7 @@ def time_until(vakit_str, next_day_if_passed=False):
     return total_seconds // 3600, (total_seconds % 3600) // 60, vakit_time.strftime("%H:%M")
 
 # =========================
-# 3. MESAJ ŞABLONLARI (PROFESYONEL)
+# 3. KOMUTLAR VE MESAJLAR
 # =========================
 
 async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,18 +104,13 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     city = " ".join(context.args)
-    loc_id = find_location_id(normalize(city))
+    times = get_prayertimes(city)
     
-    if not loc_id:
-        await update.message.reply_text("❌ <b>Şehir bulunamadı!</b>\nLütfen yazımı kontrol edin (Örn: <i>Ankara, Izmir</i>).", parse_mode=ParseMode.HTML)
-        return
-        
-    times = get_prayertimes(loc_id)
-    if not times or not times.get("maghrib"):
-        await update.message.reply_text("📡 <b>API Sunucusu Yanıt Vermiyor.</b>\nLütfen bir kaç dakika sonra tekrar deneyin.", parse_mode=ParseMode.HTML)
+    if not times:
+        await update.message.reply_text("❌ <b>Vakit verileri alınamadı.</b>\nLütfen şehir adını kontrol edin.", parse_mode=ParseMode.HTML)
         return
 
-    h, m, saat = time_until(times.get("maghrib"), True)
+    h, m, saat = time_until(times["maghrib"], True)
     mesaj = (
         f"🕌 <b>İFTAR VAKTİ | {city.upper()}</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n\n"
@@ -124,7 +118,7 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ <b>Kalan Süre:</b> <b>{h} saat {m} dakika</b>\n\n"
         f"🤲 <b>İftar Duası:</b>\n"
         f"<i>'Allah'ım senin rızan için oruç tuttum, senin rızkınla orucumu açıyorum.'</i>\n\n"
-        f"✨ <b>Hayırlı İftarlar dileriz.</b>"
+        f"✨ <b>Hayırlı İftarlar...</b>"
     )
     await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
@@ -134,18 +128,13 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     city = " ".join(context.args)
-    loc_id = find_location_id(normalize(city))
+    times = get_prayertimes(city)
     
-    if not loc_id:
-        await update.message.reply_text("❌ <b>Şehir bulunamadı!</b>", parse_mode=ParseMode.HTML)
-        return
-        
-    times = get_prayertimes(loc_id)
-    if not times or not times.get("fajr"):
-        await update.message.reply_text("📡 <b>Vakit bilgisi şu an alınamıyor.</b>", parse_mode=ParseMode.HTML)
+    if not times:
+        await update.message.reply_text("❌ <b>Vakit verileri alınamadı.</b>", parse_mode=ParseMode.HTML)
         return
 
-    h, m, saat = time_until(times.get("fajr"), True)
+    h, m, saat = time_until(times["fajr"], True)
     mesaj = (
         f"🌌 <b>SAHUR (İMSAK) | {city.upper()}</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n\n"
@@ -169,7 +158,7 @@ async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif now > end_date:
         mesaj = "👋 <b>Elveda Ya Şehr-i Ramazan...</b>\n\nRabbim tekrarına kavuştursun."
     else:
-        # Hata Çözümü: 19 Şubatta (now-start).days 0 olduğu için +1 ekliyoruz.
+        # BUGÜN 19 ŞUBAT: (19-19)+1 = 1. GÜN
         gun = (now - start_date).days + 1
         mesaj = (
             f"🌙 <b>RAMAZAN-I ŞERİF</b>\n"
@@ -179,15 +168,13 @@ async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
-# =========================
-# 4. DİĞER FONKSİYONLAR
-# =========================
+# ... (Diğer fonksiyonlar: start, hadis, duyuru, otomatik_hadis_paylas aynı kalabilir)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kaydet_chat_id(update.message.chat_id, update.message.chat.type)
     mesaj = (
         "<b>🌙 Hoş Geldiniz!</b>\n\n"
-        "Ramazan rehberiniz aktif. Aşağıdaki komutları kullanabilirsiniz:\n\n"
+        "Ramazan rehberiniz hazır. Şehir belirterek vakitleri öğrenebilirsiniz.\n\n"
         "🍽 /iftar <code>şehir</code>\n"
         "🥣 /sahur <code>şehir</code>\n"
         "📜 /hadis\n"
@@ -197,7 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HADISLER:
-        await update.message.reply_text("📜 <i>Sabır en büyük ibadettir.</i>")
+        await update.message.reply_text("📜 <i>Sabır müminin zırhıdır.</i>")
         return
     secilen = random.choice(HADISLER)
     await update.message.reply_text(f"📜 <b>GÜNÜN HADİSİ</b>\n\n<i>“{secilen['metin']}”</i>\n\n📚 {secilen['kaynak']}", parse_mode=ParseMode.HTML)
@@ -232,16 +219,8 @@ async def kaydet_mesaj_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message: kaydet_chat_id(update.message.chat_id, update.message.chat.type)
 
 def main():
-    if not TOKEN:
-        print("HATA: TOKEN bulunamadı!")
-        return
-        
     app = ApplicationBuilder().token(TOKEN).build()
-    
-    # Job Queue (Hadis Döngüsü)
     app.job_queue.run_repeating(otomatik_hadis_paylas, interval=21600, first=10)
-
-    # Komutlar
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
@@ -249,8 +228,6 @@ def main():
     app.add_handler(CommandHandler("hadis", hadis))
     app.add_handler(CommandHandler("duyuru", duyuru))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, kaydet_mesaj_chat))
-    
-    print("Bot 2026 Ramazan modunda aktif!")
     app.run_polling()
 
 if __name__ == "__main__":
