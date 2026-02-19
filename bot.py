@@ -12,8 +12,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # =========================
 # AYARLAR (Config)
 # =========================
-# TOKEN'ı ortam değişkenlerinden (Environment Variables) çeker. 
-# Eğer direkt buraya yazacaksan: TOKEN = "SENIN_TOKEN_BURAYA"
 TOKEN = os.environ.get("TOKEN") 
 ADMIN_IDS = [6563936773, 6030484208]
 CHAT_FILE = "chats.json"
@@ -52,48 +50,57 @@ def kaydet_chat_id(chat_id, chat_type):
     except: pass
 
 # =========================
-# 2. GLOBAL CANLI VAKİT ÇEKME (API)
+# 2. RADARLI VE DÜNYA ÇAPINDA VAKİT ÇEKME
 # =========================
 
 def get_prayertimes(city):
     """
-    Dünyadaki tüm şehirleri adres bazlı arar. Saçma bir yerse None döner.
+    Önce OpenStreetMap ile yerin gerçekte var olup olmadığını teyit eder.
+    Varsa koordinatlarını alıp Diyanet/Aladhan API'sine yollar.
     """
     try:
-        # timingsByAddress metodu kullanarak tüm dünyada arama yapıyoruz
-        url = f"https://api.aladhan.com/v1/timingsByAddress?address={city}"
-        r = requests.get(url, timeout=10)
+        # 1. Aşama: Haritada yer teyidi (Uyduruk şehirleri engeller)
+        headers = {'User-Agent': 'KiyiciZeminBot/1.0'}
+        geo_url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
+        geo_req = requests.get(geo_url, headers=headers, timeout=10)
+        geo_data = geo_req.json()
+
+        if not geo_data:
+            # Haritada yoksa direkt mevzuyu patlat!
+            return None, None, None
+
+        # Haritada bulduysa koordinatlarını ve gerçek adını al
+        lat = geo_data[0]['lat']
+        lon = geo_data[0]['lon']
+        gercek_yer = geo_data[0]['display_name'].split(",")[0] # Orijinal şehir adını alır
+
+        # 2. Aşama: Gerçek koordinatlarla saati çek
+        aladhan_url = f"https://api.aladhan.com/v1/timings?latitude={lat}&longitude={lon}&method=13"
+        r = requests.get(aladhan_url, timeout=10)
         data = r.json()
         
-        # Eğer API 200 (Başarılı) döndürdüyse ve data içi doluysa
         if r.status_code == 200 and data.get("code") == 200:
             timings = data["data"]["timings"]
-            tz_name = data["data"]["meta"]["timezone"] # O şehrin saat dilimi (Örn: Europe/Istanbul veya America/New_York)
-            return timings, tz_name
+            tz_name = data["data"]["meta"]["timezone"]
+            return timings, tz_name, gercek_yer
         else:
-            return None, None
+            return None, None, None
             
     except Exception as e:
-        print(f"API Mevzusu Patladı: {e}")
-        return None, None
+        print(f"Sistem Tıkandı Gardaş: {e}")
+        return None, None, None
 
 def time_until(vakit_str, tz_name):
-    """
-    O şehrin yerel saat dilimine göre ne kadar kaldığını hesaplar.
-    """
     if not vakit_str or not tz_name: return 0, 0, "--:--"
     
-    # Şehrin kendi saat dilimini al
     target_tz = pytz.timezone(tz_name)
     now_local = datetime.now(target_tz)
     
-    # Gelen veri bazen "18:45 (EEST)" formatında olabilir, sadece saati alıyoruz
     clean_time = vakit_str.split(" ")[0]
     h, m = map(int, clean_time.split(":"))
     
     vakit_time = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
     
-    # Eğer vakit geçmişse, yarına (ertesi güne) hesapla
     if now_local >= vakit_time:
         vakit_time += timedelta(days=1)
         
@@ -111,22 +118,21 @@ async def iftar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     city = " ".join(context.args)
-    timings, tz_name = get_prayertimes(city)
+    timings, tz_name, gercek_yer = get_prayertimes(city)
     
-    # HATA DURUMU: ŞEHİR BULUNAMADI (Ankara Atarı + Ramazan Kutlaması)
     if not timings:
         hata_mesaji = (
             f"❌ **La bebe sen beni mi koparıyon? '{city}' diye bi memleket mi var haritada!**\n"
             f"İcat çıkarma başıma, uyduruk isimler yazıp durma şuraya. Adam akıllı bir şehir yaz da vaktini söyleyek!\n\n"
             f"🌙 *Neyse... Yine de mübarek Ramazan ayındayız, kalbini kırmayım gardaşım. "
-            f"Rabbim niyetini kabul etsin, Ramazan-ı Şerif'in mübarek olsun. Hadi şimdi düzgün bi şehir yaz da gel.*"
+            f"Rabbim niyetini kabul etsin, Ramazan-ı Şerif'in mübarek olsun. Hadi şimdi düzgün bi yer yaz da gel.*"
         )
         await update.message.reply_text(hata_mesaji, parse_mode=ParseMode.HTML)
         return
 
     h, m, saat = time_until(timings["Maghrib"], tz_name)
     mesaj = (
-        f"🕌 <b>İFTAR VAKTİ | {city.upper()}</b>\n"
+        f"🕌 <b>İFTAR VAKTİ | {gercek_yer.upper()}</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n\n"
         f"🕓 <b>Akşam Ezanı:</b> <code>{saat}</code>\n"
         f"⏳ <b>Kalan Süre:</b> <b>{h} saat {m} dakika</b>\n\n"
@@ -143,12 +149,12 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     city = " ".join(context.args)
-    timings, tz_name = get_prayertimes(city)
+    timings, tz_name, gercek_yer = get_prayertimes(city)
     
     if not timings:
         hata_mesaji = (
             f"❌ **Oğlum '{city}' neresi la? Uzayda falan mı arıyon sahuru!**\n"
-            f"Böyle bi yer yok sistemde. Beni boşuna yorma.\n\n"
+            f"Böyle bi yer yok sistemde. Haritayı baştan çizdirme bana, beni boşuna yorma.\n\n"
             f"🌙 *Neyse, mübarek ayda sinirlenmeyecem. Gecen feyizli, sahurun bereketli, Ramazan'ın mübarek olsun gardaşım. "
             f"Düzgün bi yer yaz da vaktini veriyim sana.*"
         )
@@ -157,7 +163,7 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     h, m, saat = time_until(timings["Fajr"], tz_name)
     mesaj = (
-        f"🌌 <b>SAHUR (İMSAK) | {city.upper()}</b>\n"
+        f"🌌 <b>SAHUR (İMSAK) | {gercek_yer.upper()}</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n\n"
         f"📢 <b>İmsak Vakti:</b> <code>{saat}</code>\n"
         f"⏳ <b>Kalan Süre:</b> <b>{h} saat {m} dakika</b>\n\n"
@@ -169,7 +175,6 @@ async def sahur(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
 
 async def ramazan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Bugünün tarihini sabit Türkiye saatine göre alıyoruz (genel bilgi için)
     now = datetime.now(pytz.timezone("Europe/Istanbul")).date()
     start_date = datetime(2026, 2, 19).date()
     end_date = datetime(2026, 3, 19).date()
@@ -214,19 +219,18 @@ async def hadis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TOKEN:
-        print("TOKEN Bulunamadı! Mevzu patlak. Lütfen .env dosyanı veya TOKEN ayarını kontrol et.")
+        print("TOKEN Bulunamadı! Mevzu patlak.")
         return
 
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Komutları Ekliyoruz
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", iftar))
     app.add_handler(CommandHandler("sahur", sahur))
     app.add_handler(CommandHandler("ramazan", ramazan))
     app.add_handler(CommandHandler("hadis", hadis))
     
-    print("Bot marşa bastı, tüm dünya radarda, Ankara sokaklarında dolanıyor...")
+    print("Bot marşa bastı, Radar sistemi aktif. Uyduruk şehirlere af yok...")
     app.run_polling()
 
 if __name__ == "__main__":
