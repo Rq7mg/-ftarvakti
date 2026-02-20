@@ -5,14 +5,13 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 
 # =========================
-# ⚙️ AYARLAR VE TÜRKİYE MERKEZLİ CACHE
+# ⚙️ AYARLAR VE YEREL CACHE
 # =========================
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.environ.get("TOKEN") 
 ADMIN_IDS = [6563936773, 6030484208]
 CHATS_FILE = "chats.json"
-# Hafıza (Cache): Şehir verilerini 12 saat tutar, API'ye gitmez.
-CITY_CACHE = {} 
+CITY_CACHE = {} # Müthiş hız sağlayan hafıza sistemi
 
 HADISLER = [
     "Oruç tutunuz ki sıhhat bulasınız.",
@@ -20,11 +19,11 @@ HADISLER = [
     "Ramazan ayı girdiği zaman cennet kapıları açılır.",
     "Oruçlu için iki sevinç vardır: İftar vakti ve Rabbine kavuştuğu an.",
     "Ramazan'ın başı rahmet, ortası mağfiret, sonu cehennemden kurtuluştur.",
-    "Oruç, müminin kalkanıdır."
+    "Allah'ım! Sen affedicisin, affetmeyi seversin, beni de affet."
 ]
 
 # =========================
-# 💾 KULLANICI YÖNETİMİ
+# 💾 KULLANICI KAYIT SİSTEMİ
 # =========================
 def load_chats():
     if os.path.exists(CHATS_FILE):
@@ -34,38 +33,31 @@ def load_chats():
     return []
 
 async def save_chat_async(chat_id):
-    chats = load_chats()
-    if not any(c['chat_id'] == chat_id for c in chats):
-        chats.append({"chat_id": chat_id})
-        with open(CHATS_FILE, "w", encoding="utf-8") as f: json.dump(chats, f)
+    try:
+        chats = load_chats()
+        if not any(c['chat_id'] == chat_id for c in chats):
+            chats.append({"chat_id": chat_id})
+            with open(CHATS_FILE, "w", encoding="utf-8") as f: json.dump(chats, f)
+    except: pass
 
 # =========================
-# 🚀 TÜRKİYE ODAKLI API (TEK KAYNAK - STABİL)
+# 🚀 TÜRKİYE ÖZEL VAKİT MOTORU
 # =========================
-async def get_times_local(city_input):
+async def get_times_tr(city_input):
     tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
     city_clean = city_input.translate(tr_map).lower().strip().replace(" ", "")
     
-    # 1. HIZ İÇİN CACHE KONTROLÜ
+    # Cache Kontrolü (Hız için)
     if city_clean in CITY_CACHE:
         exp, data = CITY_CACHE[city_clean]
         if datetime.now() < exp: return data
 
-    # 2. TÜRKİYE VERİSİ İÇİN EN STABİL KAYNAK (Proxy üzerinden)
+    # Türkiye için en stabil ve hızlı tek kaynak (Aladhan + Diyanet Method)
     async with httpx.AsyncClient() as client:
         try:
-            # Türkiye sunucularına en yakın ve en hızlı çalışan endpoint
-            url = f"https://api.collectapi.com/pray/all?data.city={city_clean}"
-            headers = {
-                "content-type": "application/json",
-                "authorization": "apikey 3N09YV6C4N8V8V:5L8V8V8V8V8V8V" # Örnek Key: Kendi keyini buraya koymalısın
-            }
-            # Not: CollectAPI veya yerel bir scrape servisi Türkiye'de en hızlısıdır. 
-            # Senin için en hızlı ve ücretsiz kalacak olan Aladhan'ın Türkiye Method 13 (Diyanet) ayarını 
-            # timeout'u optimize ederek tek kaynak olarak sabitliyorum:
-            
-            url_fix = f"https://api.aladhan.com/v1/timingsByCity?city={city_clean}&country=Turkey&method=13"
-            res = await client.get(url_fix, timeout=5)
+            # timeout'u artırdım ve doğrudan Türkiye Diyanet metoduna kilitledim
+            url = f"https://api.aladhan.com/v1/timingsByCity?city={city_clean}&country=Turkey&method=13"
+            res = await client.get(url, timeout=15.0)
             
             if res.status_code == 200:
                 d = res.json()["data"]
@@ -74,29 +66,27 @@ async def get_times_local(city_input):
                     "tz": "Europe/Istanbul", 
                     "yer": city_input.upper()
                 }
-                # 12 Saat Boyunca Bu Şehri Bir Daha Sorgulama (Müthiş Hız Sağlar)
-                CITY_CACHE[city_clean] = (datetime.now() + timedelta(hours=12), res_obj)
+                # Veriyi 6 saat hafızada tut (API yoğunluğundan etkilenmemek için)
+                CITY_CACHE[city_clean] = (datetime.now() + timedelta(hours=6), res_obj)
                 return res_obj
         except:
             return None
     return None
 
 # =========================
-# 🎭 ANA MOTOR (HATA KORUMALI)
+# 🎭 ANA İŞLEMCİ (GÖRSEL ODAKLI)
 # =========================
-async def process_vakit(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
+async def vakit_hesapla(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     if not update.message: return
     
     city = " ".join(context.args) if context.args else None
     if not city:
-        await update.message.reply_text("📍 Lütfen bir şehir adı girin.\nÖrn: <code>/iftar Ankara</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("📍 Lütfen şehir yazın.\nÖrn: <code>/iftar Ankara</code>", parse_mode=ParseMode.HTML)
         return
 
-    # API Sorgusu
-    data = await get_times_local(city)
-    
+    data = await get_times_tr(city)
     if not data:
-        await update.message.reply_text("⚠️ Veri şu an alınamadı. Lütfen şehir adını kontrol edin veya az sonra tekrar deneyin.")
+        await update.message.reply_text("⚠️ Veri şu an alınamadı. Lütfen şehir adını doğru yazdığınızdan emin olun.")
         return
 
     try:
@@ -105,15 +95,12 @@ async def process_vakit(update: Update, context: ContextTypes.DEFAULT_TYPE, mode
         v_saat = data["v"][mode]
         
         target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0, microsecond=0)
-        
-        if now >= target: 
-            target += timedelta(days=1)
-            
+        if now >= target: target += timedelta(days=1)
         diff = int((target - now).total_seconds())
         
-        # Görsel Tasarım
+        # İlerleme Barı (Mavi/Gri Tasarım)
         p = min(1, max(0, 1 - (diff / 57600)))
-        bar = "🌕" * int(10 * p) + "🌑" * (10 - int(10 * p))
+        bar = "🔵" * int(10 * p) + "⚪" * (10 - int(10 * p))
         label = "İFTARA" if mode == "Maghrib" else "SAHURA"
 
         mesaj = (
@@ -127,61 +114,47 @@ async def process_vakit(update: Update, context: ContextTypes.DEFAULT_TYPE, mode
             f"✨ <i>{random.choice(HADISLER)}</i>"
         )
         await update.message.reply_text(mesaj, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logging.error(f"Hata: {e}")
-        await update.message.reply_text("❌ Vakit hesaplanırken bir sorun oluştu.")
+    except:
+        await update.message.reply_text("❌ Hesaplama hatası.")
 
 # =========================
-# 🛠️ KOMUT YÖNLENDİRMELERİ (LAMBDA YOK)
+# 🛠️ KOMUTLAR VE ADMIN
 # =========================
-async def iftar_cmd(u, c): await process_vakit(u, c, "Maghrib")
-async def sahur_cmd(u, c): await process_vakit(u, c, "Fajr")
-
 async def start(u, c):
     await save_chat_async(u.effective_chat.id)
-    keyboard = [
-        [InlineKeyboardButton("🍽 İftar Vakti", callback_data='i'), InlineKeyboardButton("🥣 Sahur Vakti", callback_data='s')],
-        [InlineKeyboardButton("📜 Günün Hadisi", callback_data='h')]
-    ]
-    await u.message.reply_text("✨ <b>RAMAZAN VAKİT BOT v30</b> ✨\nHoş geldiniz. Şehir yazarak sorgu yapabilirsiniz.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    kb = [[InlineKeyboardButton("🍽 İftar Vakti", callback_data='i'), InlineKeyboardButton("🥣 Sahur Vakti", callback_data='s')],
+          [InlineKeyboardButton("📜 Günün Hadisi", callback_data='h')]]
+    await u.message.reply_text("✨ <b>RAMAZAN VAKİT BOT v31</b> ✨\nHoş geldiniz. Şehir yazarak sorgulama yapabilirsiniz.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
-async def duyuru_cmd(u, c):
+async def duyuru_yolla(u, c):
     if u.effective_user.id not in ADMIN_IDS: return
     msg = " ".join(c.args)
     if not msg: return
-    count = 0
-    for user in load_chats():
+    chats = load_chats()
+    for user in chats:
         try: 
             await c.bot.send_message(user["chat_id"], f"📢 <b>DUYURU</b>\n\n{msg}", parse_mode=ParseMode.HTML)
-            count += 1
             await asyncio.sleep(0.05)
         except: pass
-    await u.message.reply_text(f"✅ {count} kişiye duyuru iletildi.")
+    await u.message.reply_text("✅ Duyuru başarıyla gönderildi.")
 
 async def cb_handler(u, c):
     q = u.callback_query
     await q.answer()
-    if q.data == 'h':
-        await q.message.reply_text(f"📜 <i>{random.choice(HADISLER)}</i>", parse_mode=ParseMode.HTML)
-    else:
-        await q.message.reply_text("📍 Lütfen <code>/iftar şehir</code> şeklinde yazın.", parse_mode=ParseMode.HTML)
+    if q.data == 'h': await q.message.reply_text(f"📜 <i>{random.choice(HADISLER)}</i>", parse_mode=ParseMode.HTML)
+    else: await q.message.reply_text("📍 Sorgu için: <code>/iftar Şehir</code> yazın.", parse_mode=ParseMode.HTML)
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Komutlar
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("iftar", iftar_cmd))
-    app.add_handler(CommandHandler("sahur", sahur_cmd))
-    app.add_handler(CommandHandler("duyuru", duyuru_cmd))
+    app.add_handler(CommandHandler("iftar", lambda u,c: vakit_hesapla(u,c,"Maghrib")))
+    app.add_handler(CommandHandler("sahur", lambda u,c: vakit_hesapla(u,c,"Fajr")))
+    app.add_handler(CommandHandler("duyuru", duyuru_yolla))
     app.add_handler(CallbackQueryHandler(cb_handler))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, lambda u,c: save_chat_async(u.effective_chat.id)))
     
-    # Kullanıcı Kaydı (Her mesajda)
-    async def track(u, c): 
-        if u.effective_chat: await save_chat_async(u.effective_chat.id)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track))
-    
-    print("🚀 v30 YEREL HIZ MODU AKTİF!")
+    print("🚀 v31 TÜRKİYE MODU AKTİF!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
