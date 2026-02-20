@@ -146,7 +146,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👉 /iftar <code>[şehir]</code>\n"
         "👉 /sahur <code>[şehir]</code>\n"
         "👉 /hadis - Günün Hadisi\n"
-        "👉 /durum - Sistem Durumu\n\n"
+        "👉 /durum - Sistem Durumu\n"
+        "👉 /stats - Bot İstatistikleri\n\n"
         "<i>Huzurlu bir Ramazan dilerim...</i>"
     )
     await update.message.reply_text(welcome, parse_mode=ParseMode.HTML)
@@ -164,6 +165,29 @@ async def durum(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 Yüklü Şehir: <code>{len(LOCAL_CACHE)}</code>\n"
         f"🕒 Bölge Saati: <code>{now}</code>\n"
         f"🗓 Hedef Yıl: <code>2026</code>\n"
+        f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+# ---> EKLENEN STATS FONKSİYONU <---
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_user(update.effective_chat.id)
+    try:
+        if os.path.exists(CHATS_FILE):
+            with open(CHATS_FILE, "r") as f:
+                users = json.load(f)
+                user_count = len(users)
+        else:
+            user_count = 0
+    except:
+        user_count = 0
+
+    msg = (
+        f"📊 <b>Bot İstatistikleri</b>\n"
+        f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
+        f"👥 Toplam Kullanıcı: <code>{user_count}</code>\n"
+        f"📍 Yüklü Şehir (JSON): <code>{len(LOCAL_CACHE)}</code>\n"
+        f"🛡️ Sunucu Durumu: <code>Aktif</code>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -204,10 +228,11 @@ async def run_main():
     app.add_handler(CommandHandler("sahur", lambda u,c: engine(u,c,"sahur")))
     app.add_handler(CommandHandler("hadis", hadis_ver))
     app.add_handler(CommandHandler("durum", durum))
+    app.add_handler(CommandHandler("stats", stats)) # ---> EKLENEN STATS KOMUTU
     app.add_handler(CommandHandler("yenile", admin_yenile))
     app.add_handler(CommandHandler("duyuru", admin_duyuru))
     
-    print("🚀 Ramazan Asistanı v2.0 Şatafatlı Sürüm Başlatıldı!")
+    print("🚀 Ramazan Asistanı v2.0 Şatafatlı Sürüm (Stats Eklendi) Başlatıldı!")
     
     await app.updater.initialize()
     await app.updater.start_polling()
