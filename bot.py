@@ -1,20 +1,19 @@
 import os, json, httpx, pytz, random, logging, asyncio
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # =========================
-# ⚙️ AYARLAR (Burayı Doldur)
+# ⚙️ AYARLAR
 # =========================
 logging.basicConfig(level=logging.INFO)
-TOKEN = os.environ.get("TOKEN")  # Botunuzun tokeni
-ADMIN_IDS = [6563936773, 6030484208] # Admin ID'leri
-CHATS_FILE = "chats.json" # Kullanıcı listesi
+TOKEN = os.environ.get("TOKEN")
+ADMIN_IDS = [6563936773, 6030484208]
+CHATS_FILE = "chats.json"
 
-# GITHUB'A YÜKLEDİĞİN JSON LİNKİNİ BURAYA YAZ
-# Örn: "https://raw.githubusercontent.com/kullanici/depo/main/vakitler.json"
-JSON_URL = "https://raw.githubusercontent.com/KULLANICI/DEPO/main/vakitler.json"
+# GITHUB LİNKİN
+JSON_URL = "https://raw.githubusercontent.com/Rq7mg/-ftarvakti/main/vakitler.json"
 
 # 2026 Ramazan Başlangıcı
 RAMAZAN_START = datetime(2026, 2, 18, tzinfo=pytz.timezone("Europe/Istanbul"))
@@ -25,22 +24,30 @@ HADISLER = [
     "Oruç tutunuz ki sıhhat bulasınız. ✨",
     "Sahur yapınız, zira sahurda bolluk ve bereket vardır. ✨",
     "Ramazan ayı girdiği zaman cennet kapıları açılır. ✨",
-    "Oruçlu için iki sevinç vardır: İftar ve Rabbine kavuştuğu an. ✨"
+    "Oruçlu için iki sevinç vardır: İftar ve Rabbine kavuştuğu an. ✨",
+    "Kim inanarak ve sevabını Allah'tan bekleyerek Ramazan orucunu tutarsa, geçmiş günahları bağışlanır. ✨",
+    "Cennette 'Reyyân' denilen bir kapı vardır ki, kıyamet günü oradan ancak oruçlular girer. ✨"
 ]
 
 # =========================
 # 💾 VERİ VE KULLANICI YÖNETİMİ
 # =========================
-def save_user(chat_id):
+def get_users():
     if not os.path.exists(CHATS_FILE):
-        with open(CHATS_FILE, "w") as f: json.dump([], f)
+        return []
     try:
-        with open(CHATS_FILE, "r+") as f:
-            data = json.load(f)
-            if chat_id not in [u.get("id") for u in data]:
-                data.append({"id": chat_id})
-                f.seek(0); json.dump(data, f); f.truncate()
-    except: pass
+        with open(CHATS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_user(chat_id):
+    users = get_users()
+    user_ids = [u.get("id") for u in users]
+    if chat_id not in user_ids:
+        users.append({"id": chat_id})
+        with open(CHATS_FILE, "w") as f:
+            json.dump(users, f)
 
 async def sync_data():
     global LOCAL_CACHE
@@ -49,89 +56,95 @@ async def sync_data():
             res = await client.get(JSON_URL)
             if res.status_code == 200:
                 LOCAL_CACHE = res.json()
-                print("✅ Vakit verileri hafızaya alındı!")
+                logging.info("✅ Vakit verileri güncellendi!")
                 return True
         except Exception as e:
-            print(f"❌ Veri senkronizasyon hatası: {e}")
-            # Eğer JSON yoksa botun çökmemesi için basit bir boş yapı kur
-            LOCAL_CACHE = {}
+            logging.error(f"❌ Veri çekme hatası: {e}")
     return False
 
 # =========================
-# 🎭 ANA MOTOR (İFTAR/SAHUR)
+# 🎭 ANA MOTOR
 # =========================
 async def engine(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     save_user(update.effective_chat.id)
     
-    city_raw = " ".join(context.args).lower().strip() if context.args else None
-    if not city_raw:
-        await update.message.reply_text(f"📍 <b>Hatalı kullanım!</b>\nÖrnek: <code>/{mode} Mardin</code>", parse_mode=ParseMode.HTML)
+    city_input = " ".join(context.args).strip() if context.args else None
+    if not city_input:
+        await update.message.reply_text(f"📍 <b>Hatalı kullanım!</b>\nÖrnek: <code>/{mode} İstanbul</code>", parse_mode=ParseMode.HTML)
         return
 
-    # Türkçe karakter temizleme
-    tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
-    city = city_raw.translate(tr_map)
+    def format_city_name(name):
+        name = name.lower()
+        tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
+        return name.translate(tr_map).replace(" ", "")
 
-    if city not in LOCAL_CACHE:
-        await update.message.reply_text("❌ <b>Şehir Bulunamadı!</b>\nJSON dosyanızda bu şehir tanımlı değil.")
+    city_key = format_city_name(city_input)
+
+    if not LOCAL_CACHE: await sync_data()
+
+    if city_key not in LOCAL_CACHE:
+        await update.message.reply_text(f"❌ <b>Şehir Bulunamadı!</b>\n'{city_input}' geçerli bir şehir değil.")
         return
 
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(tz)
-    
-    # Ramazan Günü Hesapla
     r_day = (now.date() - RAMAZAN_START.date()).days + 1
     
     if r_day < 1 or r_day > 30:
-        await update.message.reply_text("🌙 Şu an Ramazan ayı içerisinde değiliz.")
+        await update.message.reply_text("🌙 2026 Ramazan ayında değiliz.")
         return
 
     try:
-        v_saat = LOCAL_CACHE[city][mode][r_day-1]
+        v_saat = LOCAL_CACHE[city_key][mode][r_day-1]
         target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0)
         
-        if now >= target: target += timedelta(days=1)
-        diff = int((target - now).total_seconds())
+        diff_sec = int((target - now).total_seconds())
         
-        # Görsel İlerleme Barı
-        p = min(10, max(0, int(10 * (1 - diff/57600))))
-        bar = "🟦" * p + "⬜" * (10 - p)
+        if diff_sec < 0:
+            msg_kalan = "Vakit geçti."
+            bar = "🟦" * 10
+        else:
+            hours, remainder = divmod(diff_sec, 3600)
+            minutes, _ = divmod(remainder, 60)
+            msg_kalan = f"<b>{hours}sa {minutes}dk</b>"
+            p = min(10, max(0, int(10 * (1 - diff_sec/57600))))
+            bar = "🟦" * p + "⬜" * (10 - p)
 
         msg = (
-            f"🌙 <b>{mode.upper()} VAKTİ | {city_raw.upper()}</b>\n"
+            f"🌙 <b>{mode.upper()} VAKTİ | {city_input.upper()}</b>\n"
             f"📅 <b>Ramazan'ın {r_day}. Günü</b>\n"
             f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
             f"⏰ Saat: <code>{v_saat}</code>\n"
-            f"⏳ Kalan: <b>{diff//3600}sa {(diff%3600)//60}dk</b>\n\n"
-            f"📊 <b>Vakte Kalan Süre:</b>\n{bar}\n"
+            f"⏳ Kalan: {msg_kalan}\n\n"
+            f"📊 <b>İlerleme:</b>\n{bar}\n"
             f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
             f"📢 <i>{random.choice(HADISLER)}</i>"
         )
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        await update.message.reply_text("❌ Veri işleme hatası oluştu.")
+    except:
+        await update.message.reply_text("❌ Vakit hesaplanamadı.")
 
 # =========================
-# 🛠 ADMİN KOMUTLARI
+# 🛠 KOMUTLAR
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(update.effective_chat.id)
-    msg = (
-        "✨ <b>Ramazan Asistanı v160</b> ✨\n\n"
-        "Şehrinizdeki iftar ve sahur vakitlerini saniyesi saniyesine öğrenebilirsiniz.\n\n"
-        "📍 <b>Komutlar:</b>\n"
+    await update.message.reply_text(
+        "✨ <b>Ramazan Asistanı 2026</b> ✨\n\n"
         "/iftar [şehir] - İftar vaktini gösterir\n"
         "/sahur [şehir] - Sahur vaktini gösterir\n"
-        "/yardim - Detaylı bilgi verir"
+        "/hadis - Rastgele bir hadis gönderir\n"
+        "/yardim - Komutları listeler",
+        parse_mode=ParseMode.HTML
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def hadis_ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"📜 <b>Günün Hadisi:</b>\n\n<i>{random.choice(HADISLER)}</i>", parse_mode=ParseMode.HTML)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
-    try:
-        with open(CHATS_FILE, "r") as f: count = len(json.load(f))
-        await update.message.reply_text(f"👤 <b>Toplam Kullanıcı:</b> {count}", parse_mode=ParseMode.HTML)
-    except: await update.message.reply_text("❌ Veri okunamadı.")
+    count = len(get_users())
+    await update.message.reply_text(f"👤 Toplam Kullanıcı: {count}")
 
 async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
@@ -140,38 +153,36 @@ async def duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Kullanım: /duyuru [mesaj]")
         return
     
-    with open(CHATS_FILE, "r") as f: users = json.load(f)
-    success, fail = 0, 0
-    for user in users:
+    users = get_users()
+    s, f = 0, 0
+    for u in users:
         try:
-            await context.bot.send_message(user["id"], f"📢 <b>DUYURU</b>\n\n{text}", parse_mode=ParseMode.HTML)
-            success += 1
-        except: fail += 1
-    await update.message.reply_text(f"✅ Bitti!\nBaşarılı: {success}\nBaşarısız: {fail}")
+            await context.bot.send_message(u["id"], f"📢 <b>SİSTEM DUYURUSU</b>\n\n{text}", parse_mode=ParseMode.HTML)
+            s += 1
+            await asyncio.sleep(0.05) # Telegram flood koruması
+        except: f += 1
+    await update.message.reply_text(f"✅ Duyuru bitti.\nBaşarılı: {s}\nBaşarısız: {f}")
 
 # =========================
-# 🏁 KURULUM
+# 🏁 FİNAL
 # =========================
 async def run_bot():
     app = ApplicationBuilder().token(TOKEN).build()
-    
-    # Bot açılırken verileri bir kez çek
     await sync_data()
 
-    # Handlerlar
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("yardim", start))
     app.add_handler(CommandHandler("iftar", lambda u,c: engine(u,c,"iftar")))
     app.add_handler(CommandHandler("sahur", lambda u,c: engine(u,c,"sahur")))
+    app.add_handler(CommandHandler("hadis", hadis_ver))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("duyuru", duyuru))
     
-    print("🚀 Bot v160 Kesintisiz Olarak Başlatıldı!")
+    logging.info("🚀 Bot eksiksiz başlatıldı!")
     await app.updater.initialize()
     await app.updater.start_polling()
     await app.initialize()
     await app.start()
-    
-    # Botu hayatta tut
     while True: await asyncio.sleep(1000)
 
 if __name__ == "__main__":
