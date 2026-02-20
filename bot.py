@@ -40,13 +40,15 @@ def save_chat(chat_id):
             json.dump(chats, f)
 
 # =========================
-# 📡 İMSAKİYE MOTORU
+# 📡 İMSAKİYE MOTORU (ÇÖKME KORUMALI)
 # =========================
 async def get_imsakiye(city_input):
     tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
     city_clean = city_input.translate(tr_map).lower().strip().replace(" ", "-")
+    
     if city_clean in IMSAKIYE_CACHE: return IMSAKIYE_CACHE[city_clean]
-    async with httpx.AsyncClient(timeout=20.0) as client:
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             url = f"https://api.aladhan.com/v1/calendarByCity?city={city_clean}&country=Turkey&method=13"
             res = await client.get(url)
@@ -54,97 +56,122 @@ async def get_imsakiye(city_input):
                 data = res.json()["data"]
                 IMSAKIYE_CACHE[city_clean] = data
                 return data
-        except: return None
+        except Exception as e:
+            logging.error(f"API Hatası: {e}")
+            return None
     return None
 
 # =========================
-# 🎭 VAKİT İŞLEYİCİLER (LAMBDA HATASI GİDERİLDİ)
+# 🎭 VAKİT İŞLEYİCİLER (LOGDAKİ HATAYI ÇÖZER)
 # =========================
 async def iftar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await vakit_motoru(update, context, "Maghrib", "İFTAR")
+    await vakit_hesapla(update, context, "Maghrib", "İFTAR")
 
 async def sahur_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await vakit_motoru(update, context, "Fajr", "SAHUR")
+    await vakit_hesapla(update, context, "Fajr", "SAHUR")
 
-async def vakit_motoru(update: Update, context: ContextTypes.DEFAULT_TYPE, key, label):
+async def vakit_hesapla(update: Update, context: ContextTypes.DEFAULT_TYPE, key, label):
     city = " ".join(context.args) if context.args else None
     if not city:
-        await update.message.reply_text(f"📍 Şehir yazın. Örn: <code>/{label.lower()} istanbul</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"📍 Lütfen şehir yazın.\nÖrn: <code>/{label.lower()} Ankara</code>", parse_mode=ParseMode.HTML)
         return
-    
-    status = await update.message.reply_text("⏳ Sorgulanıyor...")
+
+    status = await update.message.reply_text(f"⏳ {city.upper()} için veriler çekiliyor...")
     data = await get_imsakiye(city)
-    
+
     if not data:
-        await status.edit_text("❌ Veri alınamadı. Şehir ismini kontrol edin.")
+        await status.edit_text("⚠️ Veri şu an alınamadı. Şehir ismini kontrol edin veya az sonra tekrar deneyin.")
         return
 
     try:
         tz = pytz.timezone("Europe/Istanbul")
         now = datetime.now(tz)
+        # Mevcut günün verisini al
         day_data = data[now.day - 1]["timings"]
         v_saat = day_data[key].split(" ")[0]
         
         target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0)
-        if now >= target:
+        
+        if now >= target: # Vakit geçtiyse yarının verisine bak
             day_data = data[now.day]["timings"]
             v_saat = day_data[key].split(" ")[0]
             target = (target + timedelta(days=1)).replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]))
 
         diff = int((target - now).total_seconds())
         bar = "🟦" * int(10 * (1 - diff/57600)) + "⬜" * (10 - int(10 * (1 - diff/57600)))
-        
-        msg = (f"🌙 <b>{label} VAKTİ | {city.upper()}</b>\n"
-               f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-               f"⏰ Vakit: <code>{v_saat}</code>\n"
-               f"⏳ Kalan: <code>{diff//3600}sa {(diff%3600)//60}dk</code>\n\n"
-               f"{bar}\n"
-               f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-               f"✨ <i>{random.choice(HADISLER)}</i>")
+
+        msg = (
+            f"🌙 <b>{label} VAKTİ | {city.upper()}</b>\n"
+            f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
+            f"⏰ Vakit: <code>{v_saat}</code>\n"
+            f"⏳ Kalan: <code>{diff//3600} saat {(diff%3600)//60} dk</code>\n\n"
+            f"{bar}\n"
+            f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
+            f"✨ <i>{random.choice(HADISLER)}</i>"
+        )
         await status.edit_text(msg, parse_mode=ParseMode.HTML)
-    except: await status.edit_text("⚠️ Bir hata oluştu.")
+    except Exception as e:
+        logging.error(f"Hesaplama hatası: {e}")
+        await status.edit_text("❌ Vakit hesaplanırken bir sorun oluştu.")
 
 # =========================
-# 🛠️ ADMIN & DİĞER
+# 🛠️ ADMIN KOMUTLARI
 # =========================
-async def stats(u, c):
-    if u.effective_user.id not in ADMIN_IDS: return
-    await u.message.reply_text(f"📊 Toplam Kullanıcı: {len(load_chats())}")
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS: return
+    users = load_chats()
+    await update.message.reply_text(f"📊 <b>BOT STATS</b>\n\n👤 Toplam Kullanıcı: {len(users)}\n💾 Önbellek: {len(IMSAKIYE_CACHE)} şehir", parse_mode=ParseMode.HTML)
 
-async def duyuru(u, c):
-    if u.effective_user.id not in ADMIN_IDS: return
-    text = " ".join(c.args)
-    if not text: return
-    for user in load_chats():
-        try: await c.bot.send_message(user["chat_id"], f"📢 <b>DUYURU</b>\n\n{text}", parse_mode=ParseMode.HTML)
+async def duyuru_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS: return
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("❌ Kullanım: <code>/duyuru Mesaj</code>", parse_mode=ParseMode.HTML)
+        return
+    
+    users = load_chats()
+    sent = 0
+    for u in users:
+        try:
+            await context.bot.send_message(u["chat_id"], f"📢 <b>DUYURU</b>\n\n{text}", parse_mode=ParseMode.HTML)
+            sent += 1
+            await asyncio.sleep(0.05)
         except: pass
-    await u.message.reply_text("✅ Gönderildi.")
+    await update.message.reply_text(f"✅ Duyuru {sent} kişiye iletildi.")
 
+# =========================
+# 🎮 ANA MENÜ VE BAŞLATICI
+# =========================
 async def start(u, c):
     save_chat(u.effective_chat.id)
-    kb = [[InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
-          [InlineKeyboardButton("📜 Hadis", callback_data='h')]]
-    await u.message.reply_text("✨ <b>RAMAZAN BOT v38</b> ✨\nŞehir yazarak vakitleri öğrenebilirsiniz.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+    kb = [
+        [InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
+        [InlineKeyboardButton("📜 Hadis", callback_data='h')],
+        [InlineKeyboardButton("📊 Stats", callback_data='st'), InlineKeyboardButton("📢 Duyuru", callback_data='dy')]
+    ]
+    await u.message.reply_text("✨ <b>RAMAZAN VAKİT BOT v39</b> ✨\nLütfen yapmak istediğiniz işlemi seçin veya şehir yazın.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
-async def cb(u, c):
+async def handle_cb(u, c):
     q = u.callback_query
     await q.answer()
-    if q.data == 'h': await q.message.reply_text(f"📜 {random.choice(HADISLER)}")
-    else: await q.message.reply_text("📍 Sorgu için: <code>/iftar şehir</code> yazın.", parse_mode=ParseMode.HTML)
+    if q.data == 'i': await q.message.reply_text("📍 İftar için: <code>/iftar şehir</code>", parse_mode=ParseMode.HTML)
+    elif q.data == 's': await q.message.reply_text("📍 Sahur için: <code>/sahur şehir</code>", parse_mode=ParseMode.HTML)
+    elif q.data == 'h': await q.message.reply_text(f"📜 {random.choice(HADISLER)}")
+    elif q.data == 'st': await stats_cmd(u, c)
+    elif q.data == 'dy': await q.message.reply_text("💡 Duyuru için <code>/duyuru</code> komutunu kullanın.")
 
-# =========================
-# 🏁 ANA ÇALIŞTIRICI
-# =========================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("iftar", iftar_cmd)) # Lambda kaldırıldı, hata çözüldü!
-    app.add_handler(CommandHandler("sahur", sahur_cmd)) # Lambda kaldırıldı, hata çözüldü!
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("duyuru", duyuru))
-    app.add_handler(CallbackQueryHandler(cb))
+    app.add_handler(CommandHandler("iftar", iftar_cmd))
+    app.add_handler(CommandHandler("sahur", sahur_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("duyuru", duyuru_cmd))
+    app.add_handler(CallbackQueryHandler(handle_cb))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, lambda u,c: save_chat(u.effective_chat.id)))
-    print("🚀 Bot v38 Loglardaki hatayı çözerek başladı!")
+    
+    print("🚀 Bot v39 Yayında!")
     app.run_polling()
 
 if __name__ == "__main__": main()
