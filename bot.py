@@ -20,6 +20,7 @@ CHATS_FILE = "chats.json"
 # GITHUB LİNKİN (Cache buster destekli)
 JSON_URL = "https://raw.githubusercontent.com/Rq7mg/-ftarvakti/main/vakitler.json"
 
+
 # 2026 Ramazan Başlangıcı
 RAMAZAN_START = datetime(2026, 2, 18, tzinfo=pytz.timezone("Europe/Istanbul"))
 
