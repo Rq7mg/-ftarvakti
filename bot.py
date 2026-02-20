@@ -12,14 +12,21 @@ TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [6563936773, 6030484208]
 CHATS_FILE = "chats.json"
 
-# Şehirlerin Boylam farkları (Diyanet'e göre dakika düzeltmeleri)
-# Bu sistem sayesinde dış API'ye gerek kalmaz.
+# Diyanet verilerine göre Ankara (0) merkezli dakika farkları
+# Doğudakiler (-) eksi, Batıdakiler (+) artı dakika alır.
 TR_CITY_DATA = {
-    "ankara": {"lat": 39.9, "offset": 0}, "istanbul": {"lat": 41.0, "offset": 12},
-    "izmir": {"lat": 38.4, "offset": 21}, "gaziantep": {"lat": 37.0, "offset": -18},
-    "adana": {"lat": 37.0, "offset": -10}, "bursa": {"lat": 40.1, "offset": 10},
-    "konya": {"lat": 37.8, "offset": -2}, "antalya": {"lat": 36.8, "offset": 1},
-    "diyarbakir": {"lat": 37.9, "offset": -24}, "samsun": {"lat": 41.2, "offset": -10}
+    "ankara": {"offset": 0}, 
+    "istanbul": {"offset": 12},
+    "izmir": {"offset": 21}, 
+    "gaziantep": {"offset": -18},
+    "adana": {"offset": -10}, 
+    "bursa": {"offset": 10},
+    "konya": {"offset": -2}, 
+    "antalya": {"offset": 1},
+    "diyarbakir": {"offset": -24}, 
+    "samsun": {"offset": -10},
+    "erzurum": {"offset": -31},
+    "trabzon": {"offset": -22}
 }
 
 HADISLER = [
@@ -36,27 +43,28 @@ def save_user(chat_id):
     if not os.path.exists(CHATS_FILE):
         with open(CHATS_FILE, "w") as f: json.dump([], f)
     with open(CHATS_FILE, "r+") as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except: data = []
         if chat_id not in [u.get("id") for u in data]:
             data.append({"id": chat_id})
             f.seek(0); json.dump(data, f); f.truncate()
 
 # =========================
-# 📡 %100 ÇALIŞAN HESAPLAMA MOTORU
+# 📡 DÜZELTİLMİŞ HESAPLAMA MOTORU
 # =========================
 def calculate_ramadan_times(city_name):
-    # Dış API yerine yerel veritabanı ve matematik kullanıyoruz.
     tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
     clean_city = city_name.translate(tr_map).lower().strip()
     
+    # Şehir listede yoksa Ankara'yı baz al ama hata verme
     city_info = TR_CITY_DATA.get(clean_city, TR_CITY_DATA["ankara"])
     
-    # 20 Şubat 2026 civarı Ankara için yaklaşık Diyanet vakitleri (Baz alınan)
-    # Bu değerler Diyanet takvimine göre kod içinde otomatik kaydırılır.
+    # 20 Şubat 2026 Ankara Diyanet Vakitleri (Referans)
     base_imsak = datetime.strptime("06:05", "%H:%M")
     base_aksam = datetime.strptime("18:37", "%H:%M")
     
-    # Şehrin boylamına göre dakika kaydırması yapılır (Diyanet usulü)
+    # Meridyen düzeltmesi: Ankara'dan farkı ekle/çıkar
     correction = city_info["offset"]
     
     imsak = (base_imsak + timedelta(minutes=correction)).strftime("%H:%M")
@@ -73,7 +81,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE, mod
         await update.message.reply_text(f"📍 Lütfen şehir girin. Örn: <code>/{mode} Gaziantep</code>", parse_mode=ParseMode.HTML)
         return
 
-    # API BEKLEME DERDİ BİTTİ - SONUÇ ANINDA GELİR
     data = calculate_ramadan_times(city)
     v_saat = data["aksam"] if mode == "iftar" else data["imsak"]
     
@@ -105,18 +112,22 @@ async def start(u, c):
     save_user(u.effective_chat.id)
     kb = [[InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
           [InlineKeyboardButton("📊 Stats", callback_data='st'), InlineKeyboardButton("📢 Duyuru", callback_data='dy')]]
-    await u.message.reply_text("✨ <b>RAMAZAN ATOMIK v42</b> ✨\nAPI hataları giderildi. Şehir yazarak anında sorgulayabilirsin!", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+    await u.message.reply_text("✨ <b>RAMAZAN ATOMIK v42.1</b> ✨\nSaatler şehir bazlı güncellendi. Sorgu için şehir yazabilirsin!", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
 async def stats(u, c):
     if u.effective_user.id in ADMIN_IDS:
-        with open(CHATS_FILE, "r") as f: count = len(json.load(f))
+        try:
+            with open(CHATS_FILE, "r") as f: count = len(json.load(f))
+        except: count = 0
         await u.message.reply_text(f"📊 Toplam Kullanıcı: {count}")
 
 async def duyuru(u, c):
     if u.effective_user.id in ADMIN_IDS:
         txt = " ".join(c.args)
         if not txt: return
-        with open(CHATS_FILE, "r") as f: users = json.load(f)
+        try:
+            with open(CHATS_FILE, "r") as f: users = json.load(f)
+        except: return
         for user in users:
             try: await c.bot.send_message(user["id"], f"📢 {txt}", parse_mode=ParseMode.HTML)
             except: pass
