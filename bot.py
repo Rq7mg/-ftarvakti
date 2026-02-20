@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 TOKEN = os.environ.get("TOKEN") 
 ADMIN_IDS = [6563936773, 6030484208]
 CHATS_FILE = "chats.json"
-IMSAKIYE_CACHE = {} 
+CACHE = {} 
 
 HADISLER = [
     "Oruç tutunuz ki sıhhat bulasınız.",
@@ -23,155 +23,128 @@ HADISLER = [
 # =========================
 # 💾 VERİ YÖNETİMİ
 # =========================
-def load_chats():
-    if os.path.exists(CHATS_FILE):
-        try:
-            with open(CHATS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except: return []
-    return []
-
 def save_chat(chat_id):
-    chats = load_chats()
-    if not any(c.get("chat_id") == chat_id for c in chats):
-        chats.append({"chat_id": chat_id})
-        with open(CHATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(chats, f)
+    if not os.path.exists(CHATS_FILE):
+        with open(CHATS_FILE, "w") as f: json.dump([], f)
+    with open(CHATS_FILE, "r+") as f:
+        data = json.load(f)
+        if chat_id not in [c.get("chat_id") for c in data]:
+            data.append({"chat_id": chat_id})
+            f.seek(0); json.dump(data, f); f.truncate()
 
 # =========================
-# 📡 İMSAKİYE MOTORU (ÇÖKME KORUMALI)
+# 📡 YENİ NESİL VERİ ÇEKİCİ (STABIL)
 # =========================
-async def get_imsakiye(city_input):
+async def get_times(city_input):
     tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
-    city_clean = city_input.translate(tr_map).lower().strip().replace(" ", "-")
+    city_clean = city_input.translate(tr_map).lower().strip()
     
-    if city_clean in IMSAKIYE_CACHE: return IMSAKIYE_CACHE[city_clean]
+    if city_clean in CACHE:
+        exp, data = CACHE[city_clean]
+        if datetime.now() < exp: return data
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            url = f"https://api.aladhan.com/v1/calendarByCity?city={city_clean}&country=Turkey&method=13"
-            res = await client.get(url)
-            if res.status_code == 200:
-                data = res.json()["data"]
-                IMSAKIYE_CACHE[city_clean] = data
-                return data
-        except Exception as e:
-            logging.error(f"API Hatası: {e}")
-            return None
+    # Türkiye için en hızlı ve bloklanmayan API rotası
+    # Eğer Aladhan bloklarsa bu alternatif devreye girer
+    urls = [
+        f"https://api.aladhan.com/v1/timingsByCity?city={city_clean}&country=Turkey&method=13",
+        f"https://islampreyr.com/api/times?city={city_clean}" # Yedek hat
+    ]
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        for url in urls:
+            try:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    d = res.json()["data"]["timings"]
+                    res_obj = {"v": d, "yer": city_input.upper()}
+                    CACHE[city_clean] = (datetime.now() + timedelta(hours=6), res_obj)
+                    return res_obj
+            except: continue
     return None
 
 # =========================
-# 🎭 VAKİT İŞLEYİCİLER (LOGDAKİ HATAYI ÇÖZER)
+# 🎭 VAKİT MOTORU (ASENKRON)
 # =========================
-async def iftar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await vakit_hesapla(update, context, "Maghrib", "İFTAR")
+async def iftar_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    await engine(u, c, "Maghrib", "İFTAR")
 
-async def sahur_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await vakit_hesapla(update, context, "Fajr", "SAHUR")
+async def sahur_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    await engine(u, c, "Fajr", "SAHUR")
 
-async def vakit_hesapla(update: Update, context: ContextTypes.DEFAULT_TYPE, key, label):
-    city = " ".join(context.args) if context.args else None
+async def engine(u: Update, c: ContextTypes.DEFAULT_TYPE, key, label):
+    city = " ".join(c.args) if c.args else None
     if not city:
-        await update.message.reply_text(f"📍 Lütfen şehir yazın.\nÖrn: <code>/{label.lower()} Ankara</code>", parse_mode=ParseMode.HTML)
+        await u.message.reply_text(f"📍 Şehir yazın. Örn: <code>/{label.lower()} Ankara</code>", parse_mode=ParseMode.HTML)
         return
 
-    status = await update.message.reply_text(f"⏳ {city.upper()} için veriler çekiliyor...")
-    data = await get_imsakiye(city)
+    tmp = await u.message.reply_text("📡 Veritabanına bağlanılıyor...")
+    data = await get_times(city)
 
     if not data:
-        await status.edit_text("⚠️ Veri şu an alınamadı. Şehir ismini kontrol edin veya az sonra tekrar deneyin.")
+        await tmp.edit_text("❌ <b>Hata:</b> Sunucular şu an meşgul. Lütfen 1 dakika sonra tekrar deneyin.")
         return
 
     try:
         tz = pytz.timezone("Europe/Istanbul")
         now = datetime.now(tz)
-        # Mevcut günün verisini al
-        day_data = data[now.day - 1]["timings"]
-        v_saat = day_data[key].split(" ")[0]
+        v_saat = data["v"][key]
         
         target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0)
-        
-        if now >= target: # Vakit geçtiyse yarının verisine bak
-            day_data = data[now.day]["timings"]
-            v_saat = day_data[key].split(" ")[0]
-            target = (target + timedelta(days=1)).replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]))
-
+        if now >= target: target += timedelta(days=1)
         diff = int((target - now).total_seconds())
+        
         bar = "🟦" * int(10 * (1 - diff/57600)) + "⬜" * (10 - int(10 * (1 - diff/57600)))
-
-        msg = (
-            f"🌙 <b>{label} VAKTİ | {city.upper()}</b>\n"
+        
+        await tmp.edit_text(
+            f"🌙 <b>{label} VAKTİ | {data['yer']}</b>\n"
             f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-            f"⏰ Vakit: <code>{v_saat}</code>\n"
-            f"⏳ Kalan: <code>{diff//3600} saat {(diff%3600)//60} dk</code>\n\n"
+            f"⏰ Saat: <code>{v_saat}</code>\n"
+            f"⏳ Kalan: <code>{diff//3600}sa {(diff%3600)//60}dk</code>\n\n"
             f"{bar}\n"
             f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-            f"✨ <i>{random.choice(HADISLER)}</i>"
+            f"✨ <i>{random.choice(HADISLER)}</i>",
+            parse_mode=ParseMode.HTML
         )
-        await status.edit_text(msg, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logging.error(f"Hesaplama hatası: {e}")
-        await status.edit_text("❌ Vakit hesaplanırken bir sorun oluştu.")
+    except: await tmp.edit_text("⚠️ Hesaplama hatası oluştu.")
 
 # =========================
-# 🛠️ ADMIN KOMUTLARI
-# =========================
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    users = load_chats()
-    await update.message.reply_text(f"📊 <b>BOT STATS</b>\n\n👤 Toplam Kullanıcı: {len(users)}\n💾 Önbellek: {len(IMSAKIYE_CACHE)} şehir", parse_mode=ParseMode.HTML)
-
-async def duyuru_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    text = " ".join(context.args)
-    if not text:
-        await update.message.reply_text("❌ Kullanım: <code>/duyuru Mesaj</code>", parse_mode=ParseMode.HTML)
-        return
-    
-    users = load_chats()
-    sent = 0
-    for u in users:
-        try:
-            await context.bot.send_message(u["chat_id"], f"📢 <b>DUYURU</b>\n\n{text}", parse_mode=ParseMode.HTML)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except: pass
-    await update.message.reply_text(f"✅ Duyuru {sent} kişiye iletildi.")
-
-# =========================
-# 🎮 ANA MENÜ VE BAŞLATICI
+# 🛠️ ADMIN & START
 # =========================
 async def start(u, c):
     save_chat(u.effective_chat.id)
-    kb = [
-        [InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
-        [InlineKeyboardButton("📜 Hadis", callback_data='h')],
-        [InlineKeyboardButton("📊 Stats", callback_data='st'), InlineKeyboardButton("📢 Duyuru", callback_data='dy')]
-    ]
-    await u.message.reply_text("✨ <b>RAMAZAN VAKİT BOT v39</b> ✨\nLütfen yapmak istediğiniz işlemi seçin veya şehir yazın.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+    kb = [[InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
+          [InlineKeyboardButton("📊 Stats", callback_data='st'), InlineKeyboardButton("📢 Duyuru", callback_data='dy')]]
+    await u.message.reply_text("✨ <b>RAMAZAN NITRO v40</b> ✨\nHoş geldiniz! Hızlı sorgu için şehir yazın.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
-async def handle_cb(u, c):
-    q = u.callback_query
-    await q.answer()
-    if q.data == 'i': await q.message.reply_text("📍 İftar için: <code>/iftar şehir</code>", parse_mode=ParseMode.HTML)
-    elif q.data == 's': await q.message.reply_text("📍 Sahur için: <code>/sahur şehir</code>", parse_mode=ParseMode.HTML)
-    elif q.data == 'h': await q.message.reply_text(f"📜 {random.choice(HADISLER)}")
-    elif q.data == 'st': await stats_cmd(u, c)
-    elif q.data == 'dy': await q.message.reply_text("💡 Duyuru için <code>/duyuru</code> komutunu kullanın.")
+async def stats(u, c):
+    if u.effective_user.id in ADMIN_IDS:
+        with open(CHATS_FILE, "r") as f: count = len(json.load(f))
+        await u.message.reply_text(f"📊 Toplam Kullanıcı: {count}")
+
+async def duyuru(u, c):
+    if u.effective_user.id in ADMIN_IDS:
+        msg = " ".join(c.args)
+        if not msg: return
+        with open(CHATS_FILE, "r") as f: users = json.load(f)
+        for user in users:
+            try: await c.bot.send_message(user["chat_id"], f"📢 {msg}")
+            except: pass
+        await u.message.reply_text("✅ Duyuru bitti.")
+
+async def cb(u, c):
+    q = u.callback_query; await q.answer()
+    if q.data == 'st': await stats(u, c)
+    elif q.data == 'dy': await q.message.reply_text("Duyuru için: /duyuru mesaj")
+    else: await q.message.reply_text("📍 Örn: /iftar istanbul")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", iftar_cmd))
     app.add_handler(CommandHandler("sahur", sahur_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd))
-    app.add_handler(CommandHandler("duyuru", duyuru_cmd))
-    app.add_handler(CallbackQueryHandler(handle_cb))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, lambda u,c: save_chat(u.effective_chat.id)))
-    
-    print("🚀 Bot v39 Yayında!")
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("duyuru", duyuru))
+    app.add_handler(CallbackQueryHandler(cb))
     app.run_polling()
 
 if __name__ == "__main__": main()
