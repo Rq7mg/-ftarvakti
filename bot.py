@@ -14,20 +14,19 @@ logging.basicConfig(
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [6563936773, 6030484208]
 CHATS_FILE = "chats.json"
-JSON_URL = "https://raw.githubusercontent.com/Rq7mg/-ftarvakti/main/vakitler.json"
 
 # Zaman Dilimi ve Başlangıç
 TR_TZ = pytz.timezone("Europe/Istanbul")
-RAMAZAN_START = datetime(2026, 2, 18, tzinfo=TR_TZ)
+RAMAZAN_START = datetime(2026, 2, 19, tzinfo=TR_TZ) # 2026 Ramazan Başlangıcı
 
-# Global Hafıza
-LOCAL_CACHE = {}
+# Global Hafıza (API Modunda Boş Kalabilir)
+LOCAL_CACHE = {} 
 HADISLER = [
     "Oruç tutunuz ki sıhhat bulasınız. ✨",
     "Sahur yapınız, zira sahurda bolluk ve bereket vardır. ✨",
     "Ramazan ayı girdiği zaman cennet kapıları açılır. ✨",
     "Oruçlu için iki sevinç vardır: İftar ve Rabbine kavuştuğu an. ✨",
-    "Kim bir oruçluya iftar ettirirse, oruçlunun sevabından bir şey eksilmeden aynı sevap ona da yazılır. ✨"
+    "Kim bir oruçluya iftar ettirirse, oruçlunun sevabından bir şey eksilmeden ayn sevap ona da yazılır. ✨"
 ]
 
 # =========================
@@ -44,27 +43,26 @@ def save_user(chat_id):
                 f.seek(0); json.dump(data, f); f.truncate()
     except: pass
 
-async def sync_data():
-    global LOCAL_CACHE
-    headers = {"User-Agent": "RamazanAsistaniBot/2.0"}
-    cache_buster = f"?t={int(datetime.now().timestamp())}"
-    async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
+async def get_vakit_api(city):
+    """Senin JSON yerine API'den veriyi çeken motor"""
+    url = f"https://prayertimes.api.abdus.dev/api/times/today?city={city.lower()}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            res = await client.get(JSON_URL + cache_buster)
+            res = await client.get(url)
             if res.status_code == 200:
-                LOCAL_CACHE = res.json()
-                logging.info(f"✅ Veriler senkronize edildi. Şehir sayısı: {len(LOCAL_CACHE)}")
-                return True, len(LOCAL_CACHE)
-            return False, f"Hata Kodu: {res.status_code}"
+                return res.json()
+            return None
         except Exception as e:
-            return False, str(e)
+            logging.error(f"API Hatası: {e}")
+            return None
 
 # =========================
 # 📊 GÖRSEL ARAÇLAR
 # =========================
 def create_progress_bar(percent):
+    percent = max(0, min(100, percent))
     done = int(percent / 10)
-    bar = "▬" * done + "🔘" + "▬" * (10 - done - 1)
+    bar = "▬" * done + "🔘" + "▬" * (10 - done - 1 if done < 10 else 0)
     return f"<code>{bar}</code> {int(percent)}%"
 
 # =========================
@@ -73,49 +71,34 @@ def create_progress_bar(percent):
 async def engine(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     save_user(update.effective_chat.id)
     
-    if not LOCAL_CACHE:
-        success, info = await sync_data()
-        if not success:
-            await update.message.reply_text(f"❌ <b>Veri Bağlantı Hatası!</b>\n<code>{info}</code>", parse_mode=ParseMode.HTML)
-            return
-
     city_input = " ".join(context.args).strip() if context.args else None
     if not city_input:
         await update.message.reply_text(f"📍 <b>Kullanım:</b> <code>/{mode} [şehir]</code>\nÖrnek: <code>/{mode} Ankara</code>", parse_mode=ParseMode.HTML)
         return
 
-    # Şehir Formatlama
-    def format_city(name):
-        name = name.lower().replace("ı", "i").replace("İ", "i")
-        tr_map = str.maketrans("çğöşü", "cgosu")
-        return name.translate(tr_map).replace(" ", "")
-
-    city_key = format_city(city_input)
-
-    if city_key not in LOCAL_CACHE:
-        await update.message.reply_text(f"❌ <b>'{city_input}'</b> şehri bulunamadı!\nŞu an {len(LOCAL_CACHE)} şehir yüklü.", parse_mode=ParseMode.HTML)
+    # Canlı Veri Çekimi
+    data = await get_vakit_api(city_input)
+    if not data:
+        await update.message.reply_text(f"❌ <b>'{city_input}'</b> şehri bulunamadı veya API hatası!", parse_mode=ParseMode.HTML)
         return
 
     now = datetime.now(TR_TZ)
     r_day = (now.date() - RAMAZAN_START.date()).days + 1
     
-    if r_day < 1 or r_day > 30:
-        await update.message.reply_text("🌙 <b>Ramazan Ayı Bekleniyor...</b>\n2026 Ramazan henüz başlamadı.", parse_mode=ParseMode.HTML)
-        return
-
     try:
-        # Sahur için "imsak" anahtarını, iftar için "iftar" anahtarını kullanır
-        json_key = "imsak" if mode == "sahur" else "iftar"
-        v_saat = LOCAL_CACHE[city_key][json_key][r_day-1]
+        # Senin mantığın: Sahur ise Imsak, İftar ise Maghrib (Akşam)
+        v_saat = data['times']['Imsak'] if mode == "sahur" else data['times']['Maghrib']
         
-        target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0)
+        target_dt = datetime.strptime(v_saat, "%H:%M")
+        target = now.replace(hour=target_dt.hour, minute=target_dt.minute, second=0, microsecond=0)
+        
         if now > target: target += timedelta(days=1)
         
         diff = target - now
         hours, remainder = divmod(int(diff.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        # Şatafatlı Mesaj Yapısı
+        # Şatafatlı Mesaj Yapısı (Birebir Senin Tasarımın)
         header = "🌅 SAHUR VAKTİ" if mode == "sahur" else "🌇 İFTAR VAKTİ"
         icon = "🌙" if mode == "sahur" else "🕌"
         
@@ -155,13 +138,12 @@ async def hadis_ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📜 <b>Günün Hadis-i Şerifi:</b>\n\n<i>{random.choice(HADISLER)}</i>", parse_mode=ParseMode.HTML)
 
 async def durum(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status = "🟢 Aktif" if LOCAL_CACHE else "🔴 Veri Yok"
     now = datetime.now(TR_TZ).strftime("%H:%M:%S")
     msg = (
         f"🖥 <b>Sistem Durumu</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-        f"📡 Veri Bağlantısı: {status}\n"
-        f"📍 Yüklü Şehir: <code>{len(LOCAL_CACHE)}</code>\n"
+        f"📡 Veri Bağlantısı: 🟢 API Aktif\n"
+        f"📍 Kaynak: <code>abdus.dev (Canlı)</code>\n"
         f"🕒 Bölge Saati: <code>{now}</code>\n"
         f"🗓 Hedef Yıl: <code>2026</code>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈"
@@ -173,6 +155,7 @@ async def admin_duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
     if not text: return
     
+    if not os.path.exists(CHATS_FILE): return
     with open(CHATS_FILE, "r") as f: users = json.load(f)
     s, f = 0, 0
     for u in users:
@@ -183,31 +166,21 @@ async def admin_duyuru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: f += 1
     await update.message.reply_text(f"✅ Duyuru Gönderildi!\nBaşarılı: {s} | Başarısız: {f}")
 
-async def admin_yenile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    success, info = await sync_data()
-    msg = f"✅ <b>Yenilendi!</b> {info} şehir yüklü." if success else f"❌ <b>Başarısız!</b> {info}"
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
 # =========================
 # 🏁 ÇALIŞTIRMA
 # =========================
 async def run_main():
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Başlatma
-    await sync_data()
-
     # Handlerlar
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", lambda u,c: engine(u,c,"iftar")))
     app.add_handler(CommandHandler("sahur", lambda u,c: engine(u,c,"sahur")))
     app.add_handler(CommandHandler("hadis", hadis_ver))
     app.add_handler(CommandHandler("durum", durum))
-    app.add_handler(CommandHandler("yenile", admin_yenile))
     app.add_handler(CommandHandler("duyuru", admin_duyuru))
     
-    print("🚀 Ramazan Asistanı v2.0 Şatafatlı Sürüm Başlatıldı!")
+    print("🚀 Ramazan Asistanı v2.0 API Destekli Başlatıldı!")
     
     await app.updater.initialize()
     await app.updater.start_polling()
