@@ -35,38 +35,25 @@ def save_chat_sync(chat_id, chat_type):
     except: pass
 
 # =========================
-# 🛠 GELİŞMİŞ ŞEHİR BULUCU (Güçlendirildi)
+# 🚀 YENİ NESİL HIZLI MOTOR (Direct City Search)
 # =========================
 def get_prayertimes(city):
     if not city or len(city) < 2: return None
     try:
-        # Nominatim engellemesini aşmak için rastgele User-Agent
-        random_ua = f"RamazanNavigator_{random.randint(100, 999)}_Bot"
-        headers = {'User-Agent': random_ua, 'Accept-Language': 'tr-TR,tr;q=0.9'}
+        # Aracı servis (Nominatim) kullanmadan direkt Aladhan City API'sine soruyoruz
+        # Ülke varsayılan olarak Turkey (TR) ayarlı, daha hızlı sonuç verir.
+        api_url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country=Turkey&method=13"
+        response = requests.get(api_url, timeout=10)
+        data = response.json()
         
-        # 1. Adım: Şehri Koordinata Çevir
-        geo_url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1&addressdetails=1"
-        res = requests.get(geo_url, headers=headers, timeout=10).json()
-        
-        if not res: return None # Şehir bulunamazsa sessiz kal
-        
-        lat, lon = res[0]['lat'], res[0]['lon']
-        yer_ismi = res[0].get('address', {}).get('province', city).capitalize()
-        if not yer_ismi: yer_ismi = res[0].get('display_name', '').split(',')[0]
-
-        # 2. Adım: Koordinat ile Vakitleri Al
-        api_url = f"https://api.aladhan.com/v1/timings?latitude={lat}&longitude={lon}&method=13"
-        data = requests.get(api_url, timeout=10).json()
-        
-        if data["code"] != 200: return None
-        
-        return {
-            "vakitler": data["data"]["timings"],
-            "timezone": data["data"]["meta"]["timezone"],
-            "yer": yer_ismi
-        }
-    except Exception as e:
-        print(f"Hata: {e}")
+        if data["code"] == 200:
+            return {
+                "vakitler": data["data"]["timings"],
+                "timezone": data["data"]["meta"]["timezone"],
+                "yer": city.upper()
+            }
+        return None
+    except:
         return None
 
 def get_progress_bar(sec, total=57600):
@@ -76,7 +63,7 @@ def get_progress_bar(sec, total=57600):
     return f"<code>{bar}</code> %{int(progress*100)}"
 
 # =========================
-# 🎮 KOMUTLAR (Async)
+# 🎮 KOMUTLAR
 # =========================
 async def radar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
@@ -89,16 +76,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🕌 Namaz", callback_data='btn_vakit')],
         [InlineKeyboardButton("📜 Hadis", callback_data='btn_hadis'), InlineKeyboardButton("⏳ Sayaç", callback_data='btn_sayac')]
     ]
-    msg = "<b>🌙 Ramazan Dijital Rehberi</b>\n\nŞehir ismini komutla beraber yazın.\nÖrn: <code>/iftar Bursa</code>"
+    msg = "<b>🌙 Ramazan Dijital Rehberi v8</b>\n\nŞehir ismini yazarak vakitleri anında öğrenebilirsin.\n\nÖrn: <code>/iftar Ankara</code>"
     try: await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     except: pass
 
 async def iftar_sahur_engine(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="Maghrib"):
     city = " ".join(context.args) if context.args else None
-    if not city: return # Şehir yoksa sessiz kal (İsteğin üzerine)
+    if not city: return # Şehir yoksa sessiz kal
 
     data = get_prayertimes(city)
-    if not data: return # Şehir bulunamadıysa sessiz kal (İsteğin üzerine)
+    if not data: return # Şehir bulunamazsa sessiz kal
 
     try:
         tz = pytz.timezone(data["timezone"])
@@ -106,6 +93,7 @@ async def iftar_sahur_engine(update: Update, context: ContextTypes.DEFAULT_TYPE,
         target_str = data["vakitler"][mode]
         h, m = map(int, target_str.split(":"))
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        
         if now >= target: target += timedelta(days=1)
         
         diff = target - now
@@ -114,7 +102,7 @@ async def iftar_sahur_engine(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
         title = "🕌 İFTAR VAKTİ" if mode == "Maghrib" else "🌙 SAHUR VAKTİ"
         mesaj = (
-            f"<b>{title} | {data['yer'].upper()}</b>\n"
+            f"<b>{title} | {data['yer']}</b>\n"
             f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
             f"⏰ <b>Vakit:</b> <code>{target_str}</code>\n"
             f"⏳ <b>Kalan:</b> <code>{sec//3600} saat {(sec%3600)//60} dk</code>\n\n"
@@ -133,14 +121,14 @@ async def vakit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = get_prayertimes(city)
     if not data: return
     v = data["vakitler"]
-    msg = (f"<b>🕌 {data['yer'].upper()} VAKİTLERİ</b>\n┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
+    msg = (f"<b>🕌 {data['yer']} VAKİTLERİ</b>\n┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
            f"🏙 İmsak: <code>{v['Fajr']}</code>\n☀️ Öğle: <code>{v['Dhuhr']}</code>\n"
            f"🌆 Akşam: <code>{v['Maghrib']}</code>\n┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈")
     try: await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
     except: pass
 
 # =========================
-# 🕹 ETKİLEŞİM VE ADMİN
+# 🕹 DİĞER FONKSİYONLAR
 # =========================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -150,8 +138,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == 'btn_sahur': await query.message.reply_text("🥣 Sahur için: <code>/sahur şehir</code>")
         elif query.data == 'btn_vakit': await query.message.reply_text("🕌 Vakitler için: <code>/vakit şehir</code>")
         elif query.data == 'btn_hadis': 
-            hadis = random.choice(["Oruç tutunuz ki sıhhat bulasınız.", "Sahurda bereket vardır."])
-            await query.message.reply_text(f"📜 {hadis}")
+            await query.message.reply_text("📜 Oruç tutunuz ki sıhhat bulasınız.")
         elif query.data == 'btn_sayac':
             days = (datetime(2026, 2, 19).date() - datetime.now().date()).days
             await query.message.reply_text(f"⏳ Ramazan'a {max(0, days)} gün kaldı.")
@@ -187,7 +174,7 @@ def main():
     app.add_handler(CommandHandler("duyuru", duyuru))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, radar_handler), group=0)
-    print("🚀 RAMAZAN PRO v7 AKTİF!")
+    print("🚀 RAMAZAN PRO v8 (HIZLI MOTOR) AKTİF!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
