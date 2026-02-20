@@ -15,7 +15,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # =========================
 TOKEN = os.environ.get("TOKEN") 
 MONGO_URI = os.environ.get("MONGO_URI") 
-ADMIN_IDS = [6563936773, 6030484208]
+ADMIN_IDS = [6563936773]
 HADIS_DOSYA = "hadisler.json"
 
 # =========================
