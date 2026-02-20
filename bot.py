@@ -5,7 +5,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 # =========================
-# ⚙️ AYARLAR VE STATS
+# ⚙️ AYARLAR
 # =========================
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.environ.get("TOKEN") 
@@ -15,16 +15,8 @@ CHATS_FILE = "chats.json"
 # 2026 Ramazan Başlangıcı (18 Şubat 2026)
 RAMAZAN_START = datetime(2026, 2, 18, tzinfo=pytz.timezone("Europe/Istanbul"))
 
-HADISLER = [
-    "Oruç tutunuz ki sıhhat bulasınız. ✨",
-    "Kim bir oruçluya iftar ettirirse, sevabı kadar sevap yazılır. ✨",
-    "Ramazan ayı girdiği zaman cennet kapıları açılır. ✨",
-    "Sahur yapınız, zira sahurda bolluk ve bereket vardır. ✨",
-    "Oruçlu için iki sevinç vardır: İftar vakti ve Rabbine kavuştuğu an. ✨"
-]
-
 # =========================
-# 💾 KULLANICI KAYDI (STATS İÇİN)
+# 💾 KULLANICI YÖNETİMİ
 # =========================
 def save_user(chat_id):
     if not os.path.exists(CHATS_FILE):
@@ -38,119 +30,112 @@ def save_user(chat_id):
     except: pass
 
 # =========================
-# 🌐 ENGEL TANIMAZ YERLİ API MOTORU
+# 📡 ÇİFT MOTORLU VERİ ÇEKİCİ (Hata Almaz!)
 # =========================
-async def get_vakit(city_name):
+async def get_vakit_guaranteed(city_name):
     tr_map = str.maketrans("çğıöşüİĞÜŞÖÇ", "cgiosuiguuoc")
     clean_city = city_name.translate(tr_map).lower().strip()
     
-    # Engellenmeyen yerli yansı API
-    url = f"https://ezanvakti.herokuapp.com/vakitler?sehir={clean_city}"
+    # MOTOR 1: Ezanvakti API
+    urls = [
+        f"https://ezanvakti.herokuapp.com/vakitler?sehir={clean_city}",
+        f"https://api.aladhan.com/v1/timingsByCity?city={clean_city}&country=Turkey&method=13"
+    ]
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            res = await client.get(url)
-            if res.status_code == 200:
-                d = res.json()[0]
-                return {"imsak": d["Imsak"], "iftar": d["Aksam"], "yer": city_name.upper()}
-        except: return None
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for url in urls:
+            try:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    d = res.json()
+                    # Heroku API formatı
+                    if isinstance(d, list): 
+                        return {"imsak": d[0]["Imsak"], "iftar": d[0]["Aksam"], "src": "Diyanet"}
+                    # Aladhan API formatı
+                    elif "data" in d:
+                        return {"imsak": d["data"]["timings"]["Fajr"], "iftar": d["data"]["timings"]["Maghrib"], "src": "Global"}
+            except:
+                continue # Hata alırsa diğer URL'ye geç
     return None
 
 # =========================
-# 🎭 ANA İŞLEM (GÖRSEL ŞÖLEN)
+# 🎭 GÖRSEL MOTOR (FULL ÖZELLİK)
 # =========================
 async def engine(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     city = " ".join(context.args) if context.args else None
     if not city:
-        await update.message.reply_text(f"📍 <b>Kullanım:</b> <code>/{mode} Mardin</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"📍 <b>Hatalı Kullanım!</b>\nLütfen: <code>/{mode} Mardin</code> yazın.", parse_mode=ParseMode.HTML)
         return
 
-    status = await update.message.reply_text("💎 <b>Veriler Hazırlanıyor...</b>", parse_mode=ParseMode.HTML)
-    data = await get_vakit(city)
+    # Şık bir bekleme mesajı
+    loading = await update.message.reply_text("⏳ <b>Veriler Hesaplanıyor...</b>", parse_mode=ParseMode.HTML)
+    
+    data = await get_vakit_guaranteed(city)
 
     if not data:
-        await status.edit_text("❌ Sunucu hatası! Lütfen şehir ismini kontrol edip tekrar deneyin.")
+        await loading.edit_text("❌ <b>Şehir Bulunamadı!</b>\nLütfen şehir ismini doğru yazdığınızdan emin olun.")
         return
 
     v_saat = data["iftar"] if mode == "iftar" else data["imsak"]
-    
-    # Zaman ve Ramazan Günü Hesabı
     tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(tz)
-    r_day = (now - RAMAZAN_START).days + 1
     
+    # Ramazan Günü Hesapla
+    r_day = (now - RAMAZAN_START).days + 1
     target = now.replace(hour=int(v_saat.split(":")[0]), minute=int(v_saat.split(":")[1]), second=0)
+    
     if now >= target: target += timedelta(days=1)
     diff = int((target - now).total_seconds())
     
-    # Dinamik İlerleme Çubuğu (Bar)
+    # Görsel Bar
     p = min(10, max(0, int(10 * (1 - diff/57600))))
-    bar = "🔘" * p + "⚪" * (10 - p)
+    bar = "🟦" * p + "⬜" * (10 - p)
 
     msg = (
-        f"🌟 <b>{mode.upper()} VAKTİ | {data['yer']}</b>\n"
+        f"🌙 <b>{mode.upper()} VAKTİ | {city.upper()}</b>\n"
         f"📅 <b>Ramazan'ın {max(1, r_day)}. Günü</b>\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-        f"⏰ Saat: <code>{v_saat}</code>\n"
-        f"⏳ Kalan: <b>{diff//3600} saat {(diff%3600)//60} dakika</b>\n\n"
-        f"📊 <b>Vakte Kalan Süre:</b>\n{bar}\n"
+        f"⏰ Vakit: <code>{v_saat}</code>\n"
+        f"⏳ Kalan: <b>{diff//3600}sa {(diff%3600)//60}dk</b>\n\n"
+        f"📊 <b>Doluluk Oranı:</b>\n{bar}\n"
         f"┈┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉┈\n"
-        f"📢 <i>{random.choice(HADISLER)}</i>"
+        f"✨ <i>Allah kabul etsin.</i>"
     )
     
-    kb = [[InlineKeyboardButton("🔄 Yenile", callback_data=f'r_{mode}_{city}')]]
-    await status.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+    await loading.edit_text(msg, parse_mode=ParseMode.HTML)
 
 # =========================
-# 🛠️ ADMIN & KOMUTLAR
+# 🛠️ ADMIN PANELİ (STATS & DUYURU)
 # =========================
 async def start(u, c):
     save_user(u.effective_chat.id)
-    kb = [
-        [InlineKeyboardButton("🍽 İftar", callback_data='btn_i'), InlineKeyboardButton("🥣 Sahur", callback_data='btn_s')],
-        [InlineKeyboardButton("📊 İstatistik", callback_data='stats'), InlineKeyboardButton("📢 Duyuru", callback_data='duyuru')]
-    ]
-    await u.message.reply_text(
-        "✨ <b>RAMAZAN PRESTIGE v130</b> ✨\n\nHoş geldiniz! En güncel Diyanet verileriyle, Ramazan ayını saniyesi saniyesine takip edin.",
-        reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML
-    )
+    kb = [[InlineKeyboardButton("🍽 İftar", callback_data='i'), InlineKeyboardButton("🥣 Sahur", callback_data='s')],
+          [InlineKeyboardButton("📊 Stats", callback_data='st'), InlineKeyboardButton("📢 Duyuru", callback_data='dy')]]
+    await u.message.reply_text("🌟 <b>RAMAZAN ULTRA v140</b> 🌟\nKesintisiz veri hattı aktif.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
-async def handle_callback(u, c):
-    q = u.callback_query; data = q.data; await q.answer()
-    if data.startswith('r_'): # Yenileme butonu
-        _, mode, city = data.split('_')
-        # Engine fonksiyonunu args ile simüle et
-        class Obj: pass
-        update_mock = Obj(); update_mock.message = q.message; update_mock.effective_user = q.from_user
-        context_mock = Obj(); context_mock.args = [city]; context_mock.bot = c.bot
-        await engine(q, context_mock, mode)
-    elif data == 'stats':
-        if q.from_user.id in ADMIN_IDS:
-            with open(CHATS_FILE, "r") as f: count = len(json.load(f))
-            await q.message.reply_text(f"👤 <b>Toplam Kullanıcı:</b> {count}", parse_mode=ParseMode.HTML)
-    elif data == 'btn_i': await q.message.reply_text("📍 İftar için: <code>/iftar Şehir</code>", parse_mode=ParseMode.HTML)
-    elif data == 'btn_s': await q.message.reply_text("📍 Sahur için: <code>/sahur Şehir</code>", parse_mode=ParseMode.HTML)
+async def stats(u, c):
+    if u.effective_user.id in ADMIN_IDS:
+        with open(CHATS_FILE, "r") as f: count = len(json.load(f))
+        await (u.message.reply_text if u.message else u.callback_query.message.reply_text)(f"👤 <b>Toplam Kullanıcı:</b> {count}", parse_mode=ParseMode.HTML)
 
 async def duyuru(u, c):
     if u.effective_user.id not in ADMIN_IDS: return
-    text = " ".join(c.args)
-    if not text:
-        await u.message.reply_text("❌ Kullanım: /duyuru [mesaj]")
-        return
+    m = " ".join(c.args)
+    if not m: return
     with open(CHATS_FILE, "r") as f: users = json.load(f)
     for user in users:
-        try: await c.bot.send_message(user["id"], f"🔔 <b>DUYURU</b>\n\n{text}", parse_mode=ParseMode.HTML)
+        try: await c.bot.send_message(user["id"], f"📢 <b>DUYURU</b>\n\n{m}", parse_mode=ParseMode.HTML)
         except: pass
-    await u.message.reply_text("✅ Duyuru başarıyla iletildi.")
+    await u.message.reply_text("✅ Duyuru gönderildi.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("iftar", lambda u,c: engine(u,c,"iftar")))
     app.add_handler(CommandHandler("sahur", lambda u,c: engine(u,c,"sahur")))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("duyuru", duyuru))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    print("🚀 Bot v130 Prestige Yayında!")
+    print("🚀 Bot Kesintisiz Modda Başlatıldı!")
     app.run_polling()
 
 if __name__ == "__main__": main()
